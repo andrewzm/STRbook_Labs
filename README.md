@@ -8,9 +8,6 @@ If you wish to contribute to this repository, please generate a pull request wit
 
 ### Acknowledgments
 
-Russel Yost, Michael Kantar, Giri Gopalan, Petra Kuhnert, Finn Lindgren, Johan Lindstr\"om, Nathan Wikle, Mevin Hooten, Clint Shumack, Matt Simpson, Simon Wood, and  the Space-Time Reading Group at the University of Missouri (Chris Hassett, Alex Oard, Toryn Schafer, Erin Schliep) gave invaluable feedback on the Labs.
-
-Patrick McDermott contributed functions to the book's \cc{R} package {\bf STRbook} for the ESN implementation in Appendix F. 
- 
+Russel Yost, Michael Kantar, Giri Gopalan, Petra Kuhnert, Finn Lindgren, Johan Lindström, Nathan Wikle, Mevin Hooten, Clint Shumack, Matt Simpson, Simon Wood, and  the Space-Time Reading Group at the University of Missouri (Chris Hassett, Alex Oard, Toryn Schafer, Erin Schliep) as well as several students at our short courses, gave invaluable feedback on initial versions of the Labs. 
 
 
