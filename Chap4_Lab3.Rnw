@@ -1,7 +1,7 @@
 \documentclass[b5paper,11pt]{book}
 \input{preamble}
 
-\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab2B}}}
+\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab3}}}
 {\standalonetrue}
 {\standalonefalse}
 
@@ -193,8 +193,8 @@ ggplot(BETA) + geom_point(aes(x = lat, y = alpha1)) +
 The three empirical estimates, plotted as a function of latitude, are shown in Figure \ref{fig:alpha_emp_ests}. The function $\alpha_1(\bs)$ exhibits a strong latitudinal trend, as expected; $\alpha_2(\bs)$ shows a weak latitudinal trend; and $\alpha_3(\bs)$ exhibits no trend. For this reason we model the expectations of these fields as \ifstandalone
 \begin{align}
 E(\alpha_1(\bs)) &= \alpha_{11} + \alpha_{12}s_2,\label{eq:alpha1}\\
-E(\alpha_2(\bs)) &= \alpha_{21} + \alpha_{22}s_2,\nonumber \\
-E(\alpha_3(\bs)) &= \alpha_{31},\nonumber \end{align},
+E(\alpha_2(\bs)) &= \alpha_{21} + \alpha_{22}s_2,\label{eq:alpha2} \\
+E(\alpha_3(\bs)) &= \alpha_{31},\label{eq:alpha3} \end{align}
 where $s_2$ denotes the latitude coordinate at $\bs = (s_1, s_2)'$.
 \else in \eqref{eq:alpha1}--\eqref{eq:alpha3}. \fi  Note that in this model we do not consider any spatio-temporal covariates, and hence the term $\bx(\bs;t)'\bfbeta = 0$ in \eqref{eq:Yprocess_tbasis2}. This does not mean that we do not have an intercept in our model: although it is random, the spatial field $\alpha_1(\bs)$ acts as a temporally invariant spatial covariate and includes a global space-time mean ($\alpha_{11}$ in \eqref{eq:alpha1}), which is estimated.
 
@@ -266,7 +266,7 @@ cov.nu <- list(covf = "exp",
                                       # for each nu
 @
 
-The function to create the spatio-temporal model is \fn{createSTmodel}. This takes as data the object \cc{STdata}, the covariates for the $\alpha$-fields (an intercept and latitude for $\alpha_1(\bs)$ and $\alpha_2(\bs)$, and just an intercept for $\alpha_3(\bs)$; see \eqref{eq:alpha1}--\eqref{eq:alpha3}), the covariance functions of the $\alpha$-fields and the $\nu$-field, and a list containing the names of station coordinate fields (\cc{lon} and \cc{lat}).
+The function to create the spatio-temporal model is \fn{createSTmodel}. This takes as data the object \cc{STdata}, the covariates for the $\alpha$-fields (an intercept and latitude for $\alpha_1(\bs)$ and $\alpha_2(\bs)$, and just an intercept for $\alpha_3(\bs)$; see \eqref{eq:alpha1}--\eqref{eq:alpha3}, the covariance functions of the $\alpha$-fields and the $\nu$-field, and a list containing the names of station coordinate fields (\cc{lon} and \cc{lat}).
 
 <<>>=
 locations <- list(coords = c("lon", "lat"))

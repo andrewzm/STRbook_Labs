@@ -83,7 +83,7 @@ thetap[[3]] <- c(8, 0.005, 0.1)
 thetap[[4]] <- c(8, 0.005, -0.1)
 @
 
-\noindent Plotting proceeds by first evaluating the kernel for all $x$ at $s = 0.5$, and then plotting these evaluations against $x$. The first kernel is plotted below; plotting the other three is left as an exercise for the reader. The kernels are shown in the top panels of Figure~\ref{fig:DSTMdynamics}.
+\noindent Plotting proceeds by first evaluating the kernel for all $x$ at $s = 0.5$, and then plotting these evaluations against $x$. The first kernel is plotted below; plotting the other three is left as an exercise for the reader. \ifstandalone\else The kernels are shown in the top panels of Figure~\ref{fig:DSTMdynamics}.\fi
 
 <<eval = FALSE>>=
 m_x_0.5 <- m(s = 0.5, x = s_grid,            # construct kernel
@@ -157,7 +157,7 @@ for(i in 1:4) {                         # for each kernel
 
 \noindent Repeatedly appending data frames, as is done above, is computationally inefficient. For large systems it would be quicker to save a data frame for each time point in another list and then concatenate using \fn{rbindlist} from the package {\bf data.table}.
 
-Since now \cc{Y[[i]]}, for \cc{i}\,$=1,\ldots,4$, contains a data frame in long format, it is straightforward to visualize. The code given below constructs the Hovm\"{o}ller plot for the IDE process for \cc{i}\,$=1$. Plotting for \cc{i}\,$=2,3,4$ is left as an exercise for the reader. The resulting plots are shown in the bottom panels of Figure~\ref{fig:DSTMdynamics}.
+Since now \cc{Y[[i]]}, for \cc{i}\,$=1,\ldots,4$, contains a data frame in long format, it is straightforward to visualize. The code given below constructs the Hovm\"{o}ller plot for the IDE process for \cc{i}\,$=1$. Plotting for \cc{i}\,$=2,3,4$ is left as an exercise for the reader. \ifstandalone\else The resulting plots are shown in the bottom panels of Figure~\ref{fig:DSTMdynamics}.\fi
 
 <<eval= FALSE>>=
 ggplot(Y[[1]]) + geom_tile(aes(s, t, fill = Y)) +
@@ -186,7 +186,7 @@ ggsave(gplot, file = "img/Chapter_5/IDEkernels.png", width = 12, height = 6, dpi
 
 Now assume that we want to simulate noisy observations from one of the process models that we have just simulated from. Why would we want to do this? Frequently, the only way to test whether algorithms for inference are working as they should is to mimic both the underlying true process \emph{and} the measurement process. Working with simulated data is the first step in developing reliable algorithms that are then ready to be applied to real data.
 
-To map the observations to the data we need an incidence matrix that picks out the process value that has been observed. This incidence matrix is simply composed of several rows, one for each observation, with zeros everywhere except for the entry corresponding to the process value that has been observed (recall Section \ref{sec:STDMproc}). When the locations we are observing change over time, the incidence matrix correspondingly changes over time.
+To map the observations to the data we need an incidence matrix that picks out the process value that has been observed. This incidence matrix is simply composed of several rows, one for each observation, with zeros everywhere except for the entry corresponding to the process value that has been observed\ifstandalone.\else (recall Section \ref{sec:STDMproc}).\fi When the locations we are observing change over time, the incidence matrix correspondingly changes over time.
 
 Suppose that at each time point we observe the process at 50 locations which, for convenience, are a subset of \cc{s\_grid}. (If this is not the case, some nearest-neighbor mapping or deterministic interpolation method can be used.)
 

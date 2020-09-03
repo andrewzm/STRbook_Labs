@@ -1,7 +1,7 @@
 \documentclass[b5paper,11pt]{book}
 \input{preamble}
 
-\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab3A}}}
+\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab4}}}
 {\standalonetrue}
 {\standalonefalse}
 
@@ -14,7 +14,7 @@ opts_chunk$set(background = rgb(1,1,0.85),
 
 \ifstandalone
 
-\section*{Lab 4.3:  Spatio-temporal modeling of GAMs with {\bf mgcv}}
+\section*{Lab 4.4:  Spatio-temporal modeling of GAMs with {\bf mgcv}}
 
 We often seek more flexible models that can accommodate nonlinear structure in the mean function.  One successful approach to this problem has been through the use of {\it generalized additive models} or GAMs. In general, these models consider a transformation of the mean response to be an additive form, in which the additive components are smooth functions (e.g., splines) of the covariates.  For example, we might consider a data model
 \begin{equation}

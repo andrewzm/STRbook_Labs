@@ -18,7 +18,7 @@ opts_chunk$set(background = rgb(1,1,0.85),
 
 If we have no prior knowledge to guide us on how to parameterize $\bM$, then $\bM$ can be es\-tim\-ated in full in the context of a standard state-space modeling framework. When taking this approach, it is important that a very low-dimensional representation of the spatio-temporal process is adopted -- the dimension of the parameter space increases quadratically with the dimension of the process, and thus the model can easily become over-parameterized.
 
-Empirical orthogonal functions (EOFs) are ideal basis functions to use in this case, since they capture most of the variability in the observed signal, by design. In this Lab we look at the SST data set, take the EOFs that we generated in Lab 2.3, and estimate all unknown parameters, first within a classical time-series framework based on a vector autoregression and using the method of moments (see Appendix \ref{sec:estimationMoM}), and then in a state-space framework using the EM algorithm (see Appendix \ref{sec:estimationLDSTM}).
+Empirical orthogonal functions (EOFs) are ideal basis functions to use in this case, since they capture most of the variability in the observed signal, by design. In this Lab we look at the SST data set, take the EOFs that we generated in Lab 2.3, and estimate all unknown parameters, first within a classical time-series framework based on a vector autoregression and using the method of moments \ifstandalone,\else(see Appendix \ref{sec:estimationMoM}),\fi and then in a state-space framework using the EM algorithm\ifstandalone.\else (see Appendix \ref{sec:estimationLDSTM}).\fi
 
 \subsection*{Time-Series Framework}
 
@@ -87,14 +87,14 @@ TStplustau <- TS[-(1:tau), ] # TS with first tau time pts removed
 TSt <- TS[-((nT-5):nT), ]    # TS with last tau time pts removed
 @
 
-\noindent The lag-0 empirical covariance matrix and the lag-$\tau$ empirical cross-covariance matrices are now computed by taking their matrix cross-product and dividing by the appropriate number of time points; see \eqref{eq:emp_cov}.
+\noindent The lag-0 empirical covariance matrix and the lag-$\tau$ empirical cross-covariance matrices are now computed by taking their matrix cross-product and dividing by the appropriate number of time points\ifstandalone.\else; see \eqref{eq:emp_cov}.\fi
 
 <<>>=
 Cov0 <- crossprod(TS)/nT
 Covtau <- crossprod(TStplustau,TSt)/(nT - tau)
 @
 
-\noindent The estimates for $\bM$ and $\bC_\eta$ can now be estimated from these empirical covariance matrices.  As discussed in Appendix \ref{sec:estimationMoM}, this can be done using the following code.
+\noindent The estimates for $\bM$ and $\bC_\eta$ can now be estimated from these empirical covariance matrices.  \ifstandalone\else As discussed in Appendix \ref{sec:estimationMoM}, this can be done using the following code.\fi
 
 <<>>=
 C0inv <- solve(Cov0)
@@ -110,7 +110,7 @@ image(Mest)
 image(Ceta)
 @
 
-\noindent From visual inspection, the estimate of the propagator matrix, \cc{Mest}, is by no means diagonally dominant, implying that there is benefit in assuming interactions between the EOFs across time steps (see Section \ref{sec:ProcRed}). Further, the estimated variances along the diagonal of the covariance matrix of the additive disturbance in the IDE model, $\bC_\eta$, decrease with the EOF index; this is expected as EOFs with higher indices tend to have higher-frequency components.
+\noindent From visual inspection, the estimate of the propagator matrix, \cc{Mest}, is by no means diagonally dominant, implying that there is benefit in assuming interactions between the EOFs across time steps\ifstandalone.\else (see Section \ref{sec:ProcRed}).\fi Further, the estimated variances along the diagonal of the covariance matrix of the additive disturbance in the IDE model, $\bC_\eta$, decrease with the EOF index; this is expected as EOFs with higher indices tend to have higher-frequency components.
 
 Forecasting using this EOF-reduced model is straightforward as we take the coefficients at the final time point, $\bfalpha_t$, propagate those forward, and re-project onto the original space. For example,  $\hat\bfmu + \bfPhi\bM^2\bfalpha_t$ gives a one-year forecast. Matrix powers (which represent multiple matrix multiplications and do not come from elementwise multiplications) can be implemented using the operator \cc{\%\^{}\%} from the package {\bf expm}; this will be used when we implement the state-space model below. Here we consider six-month-ahead forecasts; in the code below we project ahead the EOF coefficients of the time series at the 328th time point (which corresponds to April 1997) six months into the future.
 
@@ -119,7 +119,7 @@ SSTlonlat$pred <- NA
 alpha_forecast <- Mest %*% TS[328, ]
 @
 
-\noindent The projection onto the original space is done by pre-multiplying by the EOFs and adding back the estimated spatial mean (see Section \ref{sec:estimationMoM}).
+\noindent The projection onto the original space is done by pre-multiplying by the EOFs and adding back the estimated spatial mean\ifstandalone.\else (see Section \ref{sec:estimationMoM}).\fi
 
 <<>>=
 idx <- which(SSTlonlat$mask == 0)
@@ -136,7 +136,7 @@ SSTlonlat$obs1[idx]  <- SSTdata[, 328]
 SSTlonlat$obs2[idx]  <- SST_Oct97
 @
 
-The six-month-ahead prediction variances can also be computed (see Appendix \ref{sec:estimationMoM}).
+The six-month-ahead prediction variances can also be computed\ifstandalone.\else (see Appendix \ref{sec:estimationMoM}).\fi
 
 <<>>=
 C <- Mest %*% Cov0 %*% t(Mest) + Ceta
@@ -252,7 +252,7 @@ dev.off()
 	\end{center}
 \end{figure}
 
-Let us turn now to inference on the parameters. From Appendix \ref{sec:EM} note that the EM algorithm utilizes a Kalman filter that processes the data one time period (e.g., month) at a time. (Recall that with the method of moments we let $\tau = 6$ months, so we estimated directly the state transitions over six months.) Therefore, inferences on the parameters and their interpretations differ considerably. For example, the left and right panels of Figure \ref{fig:M_compare} show the estimates of the evolution matrix for the two methods. At first sight, it appears that the matrix estimated using the EM algorithm is indicating a random-walk behavior. However, if we multiply the matrix $\bM$ by itself six times (which then describes the evolution over six months), we obtain something that is relatively similar to what was estimated using the method of moments using a time lag of $\tau = 6$ months.
+Let us turn now to inference on the parameters. \ifstandalone Note \else From Appendix \ref{sec:EM} note \fi that the EM algorithm utilizes a Kalman filter that processes the data one time period (e.g., month) at a time. (Recall that with the method of moments we let $\tau = 6$ months, so we estimated directly the state transitions over six months.) Therefore, inferences on the parameters and their interpretations differ considerably. For example, the left and right panels of Figure \ref{fig:M_compare} show the estimates of the evolution matrix for the two methods. At first sight, it appears that the matrix estimated using the EM algorithm is indicating a random-walk behavior. However, if we multiply the matrix $\bM$ by itself six times (which then describes the evolution over six months), we obtain something that is relatively similar to what was estimated using the method of moments using a time lag of $\tau = 6$ months.
 
 To make the plots in Figure~\ref{fig:M_compare}, we first cast the matrices into objects of class \cc{Matrix}. Note that using the function \fn{image} on objects of class \cc{matrix} generates similar plots that are, however, less informative. On the other hand, plots of {\bf Matrix} objects are done using the function \fn{levelplot} in the {\bf lattice} package.
 

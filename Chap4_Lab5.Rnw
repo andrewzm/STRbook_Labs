@@ -1,7 +1,7 @@
 \documentclass[b5paper,11pt]{book}
 \input{preamble}
 
-\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab3B}}}
+\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab5}}}
 {\standalonetrue}
 {\standalonefalse}
 
@@ -13,7 +13,7 @@ opts_chunk$set(background = rgb(1,1,0.85),
 @
 
 \ifstandalone
-\section*{Lab 5.2: Non-Gaussian Spatio-Temporal Models with INLA}
+\section*{Lab 4.5: Non-Gaussian Spatio-Temporal Models with INLA}
 \else
 \addcontentsline{toc}{section}{Lab 4.5: Non-Gaussian Spatio-Temporal Models with {\bf INLA}}
 \section*{Lab 4.5: Non-Gaussian Spatio-Temporal Models with {\bf INLA}}

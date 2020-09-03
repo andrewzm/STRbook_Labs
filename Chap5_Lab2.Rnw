@@ -346,7 +346,7 @@ Analysis of the Sydney radar data set proceeds in much the same way as in the si
 data("radar_STIDF", package = "STRbook")
 @
 
-\noindent \ifstandalone \else As was seen  in Chapter 2, the Sydney radar data set exhibits clear movement (drift), making the IDE a good modeling choice for these data. \fi  We now call the function \fn{IDE} as before, with the added arguments \args{hindcast} and \args{forecast}, which indicate how many time intervals into the past, and how many into the future, we wish to predict for periods preceeding the training period (hindcast) and periods following the training period (forecast), respectively (see Section~\ref{sec:ValCrosVal} for more information on hindcasts and forecasts). In this case the data are at 10-minute intervals (one period), and we forecast and hindcast for two periods each (i.e., 20 minutes).
+\noindent \ifstandalone \else As was seen  in Chapter 2, the Sydney radar data set exhibits clear movement (drift), making the IDE a good modeling choice for these data. \fi  We now call the function \fn{IDE} as before, with the added arguments \args{hindcast} and \args{forecast}, which indicate how many time intervals into the past, and how many into the future, we wish to predict for periods preceeding the training period (hindcast) and periods following the training period (forecast), respectively\ifstandalone.\else (see Section~\ref{sec:ValCrosVal} for more information on hindcasts and forecasts).\fi In this case the data are at 10-minute intervals (one period), and we forecast and hindcast for two periods each (i.e., 20 minutes).
 
 <<>>=
 IDEmodel <- IDE(f = z ~ 1,
