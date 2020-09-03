@@ -1,0 +1,10 @@
+*
+!.gitignore
+!*.Rnw
+!*.bib
+!preamble.tex
+!preamble_knitr.tex
+!README.md
+!asa_edition.bst
+!img/
+!data/
