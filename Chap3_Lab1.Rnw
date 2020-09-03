@@ -1,0 +1,350 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap3_Lab1}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\addcontentsline{toc}{section}{Lab 3.1: Deterministic Prediction Methods}
+\section*{Lab 3.1: Deterministic Prediction Methods}
+\markright{LAB 3.1: DETERMINISTIC PREDICTION METHODS}
+
+\subsection*{Inverse Distance Weighting}
+
+Inverse distance weighting (IDW) is one of the simplest deterministic spatio-temporal interpolation methods. It can be implemented easily in \cc{R} using the function \fn{idw} in the package {\bf gstat}, or from scratch, and in this Lab we shall demonstrate both approaches. We require the following packages.
+
+
+<<message=FALSE,results='hide',warning=FALSE>>=
+library("dplyr")
+library("fields")
+library("ggplot2")
+library("gstat")
+library("RColorBrewer")
+library("sp")
+library("spacetime")
+library("STRbook")
+@
+
+We consider the maximum temperature field in the NOAA data set for the month of July 1993. These data can be obtained from the data \cc{NOAA\_df\_1990} using the \fn{filter} function in {\bf dplyr}.
+
+<<warning=FALSE>>=
+data("NOAA_df_1990", package = "STRbook")
+Tmax <- filter(NOAA_df_1990,       # subset the data
+              proc == "Tmax" &     # only max temperature
+              month == 7 &         # July
+              year == 1993)        # year of 1993
+@
+
+<<echo=FALSE, warning = FALSE>>=
+NOAA_plot <- function(Tmax_1) {
+  ggplot(Tmax_1) +              # plot points
+    geom_point(aes(x = lon,y = lat,        # lon and lat
+                   colour = z),            # attribute color
+               size = 2) +                 # make all points larger
+    scale_colour_distiller(palette = "Spectral",
+                           guide = "colourbar",
+                           name = "degF",
+                           limits = c(64,105)) +                    # attach color scale
+    xlab("Longitude (deg)") +              # x-axis label
+    ylab("Latitude (deg)") +               # y-axis label
+    geom_path(data = map_data("state"),    # add world map
+          aes(x = long, y = lat, group = group)) +
+    facet_grid(~date) +                       # facet by time
+    coord_fixed(xlim = c(-105, -75),
+                ylim = c(25, 50))  +       # zoom in
+    geom_point(data = data.frame(lon = -87.5, lat = 40,
+                                 date = as.Date("1993-07-15")),
+               aes(lon,lat),pch=17,size=4) +
+    theme_bw()                             # B&W theme
+}
+NOAA_plot1 <- NOAA_plot(filter(Tmax, day %in% c(15)))
+NOAA_plot2 <- NOAA_plot(filter(Tmax, day %in% c(1, 15, 30)))
+ggsave(NOAA_plot1,file="img/Chapter_3/NOAA4.png",width=4,height=2.5,dpi=300)
+ggsave(NOAA_plot2,file="img/Chapter_3/NOAA5.png",width=8,height=2.5,dpi=300)
+@
+
+
+\noindent We next construct the three-dimensional spatio-temporal prediction grid using \fn{expand.grid}. We consider a 20 $\times$ 20 grid in longitude and latitude and a sequence of 6 days regularly arranged in the month.
+
+<<>>=
+pred_grid <- expand.grid(lon = seq(-100, -80, length = 20),
+                         lat = seq(32, 46, length = 20),
+                         day = seq(4, 29, length = 6))
+@
+
+The function in {\bf gstat} that does the inverse distance weighting, \fn{idw}, takes the following arguments: \args{formula}, which identifies the variable to interpolate; \args{locations}, which identifies the spatial and temporal variables; \args{data}, which can take the data in a data frame; \args{newdata}, which contains the space-time grid locations at which to interpolate; and \args{idp}, which corresponds to $\alpha$ in \eqref{eq:IDWw}\ifstandalone below. \else. \fi The larger $\alpha$ (\args{idp}) is, the less the smoothing. This parameter is typically set using cross-validation, which we explore later in this Lab; here we fix $\alpha = 5$. We run \fn{idw} below with the variable \cc{Tmax}, omitting data on 14 July 1993.
+
+<<message=FALSE,results='hide'>>=
+Tmax_no_14 <- filter(Tmax, !(day == 14))         # remove day 14
+Tmax_July_idw <- idw(formula = z ~ 1,            # dep. variable
+                     locations = ~ lon + lat + day, # inputs
+                     data = Tmax_no_14,          # data set
+                     newdata = pred_grid,        # prediction grid
+                     idp = 5)                    # inv. dist. pow.
+@
+
+\noindent The output \cc{Tmax\_July\_idw} contains the fields \cc{lon}, \cc{lat}, \cc{day}, and \cc{var1.pred} corresponding to the IDW interpolation over the prediction grid. This data frame can be plotted using {\bf ggplot2} commands as follows.
+
+
+<<fig.keep='none', results = 'hide'>>=
+ggplot(Tmax_July_idw) +
+    geom_tile(aes(x = lon, y = lat,
+                  fill = var1.pred)) +
+    fill_scale(name = "degF") +    # attach color scale
+    xlab("Longitude (deg)") +           # x-axis label
+    ylab("Latitude (deg)") +            # y-axis label
+    facet_wrap(~ day, ncol = 3) +       # facet by day
+    coord_fixed(xlim = c(-100, -80),
+                ylim = c(32, 46))  +    # zoom in
+    theme_bw()                          # B&W theme
+@
+
+\noindent \ifstandalone \else A similar plot to the one above, but produced using \fn{stplot} instead, is shown in the left panel of Figure \ref{fig:pred_IDW_Gauss}. \fi Notice how the day with missing data is ``smoothed out'' when compared to the others. As an exercise, you can redo IDW including the 14 July 1993 in the data set, and observe how the prediction changes for that day.
+
+<<echo=FALSE, results='hide', fig.keep = 'none'>>=
+color_pal <- rev(colorRampPalette(brewer.pal(11, "Spectral"))(16))
+spat_pred_grid <- expand.grid(
+                      lon = seq(-100, -80, length = 20),
+                      lat = seq(32, 46, length = 20)) %>%
+            SpatialPoints(proj4string = CRS("+proj=longlat"))
+gridded(spat_pred_grid) <- TRUE
+temp_pred_grid <- as.Date("1993-07-01") + seq(3, 28, length = 6)
+DE_pred <- STFDF(sp = spat_pred_grid,    # spatial part
+                 time = temp_pred_grid,  # temporal part
+                 data = Tmax_July_idw)
+
+color_pal <- rev(colorRampPalette(brewer.pal(11, "Spectral"))(16))
+png("./img/Chapter_3/IDW_pred.png",width = 1600,height=1000,res=300)
+stplot(DE_pred[,,"var1.pred"],
+       main = "Predictions (degrees Fahrenheit)",
+       layout = c(3, 2),
+       col.regions = color_pal)
+dev.off()
+@
+
+\subsubsection*{Implementing IDW from First Principles}
+
+It is often preferable to implement simple algorithms, like IDW, from scratch, as doing so increases code versatility (e.g., it facilitates implementation of a cross-validation study). Reducing dependence on other packages will also help the code last the test of time (as it becomes immune to package changes).
+
+\ifstandalone It can be shown that the IDW interpolator is given by
+\begin{equation}
+\widehat{Z}(\bs_0;t_0) =  \sum_{j=1}^T \sum_{i=1}^{m_j} w_{ij}(\bs_0;t_0) Z(\bs_{i j};t_j),
+\label{eq:IDW}
+\end{equation}
+where
+\begin{equation}
+w_{ij}(\bs_0;t_0) \equiv \frac{\widetilde{w}_{ij}(\bs_0;t_0)}{\sum_{k=1}^T \sum_{\ell=1}^{m_k} \widetilde{w}_{k \ell}(\bs_0;t_0)},
+\label{eq:IDWnw}
+\end{equation}
+and
+\begin{equation}
+\widetilde{w}_{ij}(\bs_0;t_0) \equiv \frac{1}{d(\{\bs_{i j},t_j\},\{\bs_0,t_0\})^\alpha}.
+\label{eq:IDWw}
+\end{equation}
+Moreover, we can treat IDW as a kernel predictor. That is, in (\ref{eq:IDWw}) we can let
+$$
+\widetilde{w}_{ij}(\bs_0;t_0) = k(\{\bs_{ij};t_j\},\{\bs_0;t_0\};\theta),
+$$
+where $k(\{\bs_{ij};t_j\},\{\bs_0;t_0\};\theta)$ is a {\it kernel function} (i.e., a function that quantifies the similarity between two locations) that depends again on the distance between $\{\bs_{ij};t_j\}$ and $\{\bs_0;t_0\}$ and some {\it bandwidth} parameter, $\theta$ (in this case equal to $\alpha$). \else
+We showed that IDW is a kernel predictor and yields the kernel weights given by \eqref{eq:IDWw}. \fi
+To construct these kernel weights we first need to find the distances between all prediction locations and data locations, take their reciprocals and raise them to the power (\args{idp}) of $\alpha$. Pairwise distances between two arbitrary sets of points are most easily computed using the \fn{rdist} function in the package {\bf fields}. Since we wish to generate these kernel weights for different observation and prediction sets and different bandwidth parameters, we create a function \fn{Wt\_IDW} that generates the required kernel-weights matrix.
+
+<<warning=FALSE,results='hide',message=FALSE>>=
+pred_obs_dist_mat <- rdist(select(pred_grid, lon, lat, day),
+                           select(Tmax_no_14, lon, lat, day))
+Wt_IDW <- function(theta, dist_mat) 1/dist_mat^theta
+Wtilde <- Wt_IDW(theta = 5, dist_mat = pred_obs_dist_mat)
+@
+
+\noindent The matrix \cc{Wtilde} now contains all the $\tilde{w}_{ij}$ described in \eqref{eq:IDWw}; that is, the $(k,l)$th element in \cc{Wtilde} contains the distance between the $k$th prediction location and the $l$th observation location, raised to the power of 5, and reciprocated.
+
+Next, we compute the weights in \eqref{eq:IDWnw}. These are just the kernel weights normalized by the sum of all kernel weights associated with each prediction location. Normalizing the weights at every location can be done easily using \fn{rowSums} in \cc{R}.
+
+<<>>=
+Wtilde_rsums <- rowSums(Wtilde)
+W <- Wtilde/Wtilde_rsums
+@
+
+
+\noindent The resulting matrix \cc{W} is the weight matrix, sometimes known as the \emph{influence matrix}. The predictions are then given by \eqref{eq:IDW}, which is just the influence matrix multiplied by the data.
+
+<<>>=
+z_pred_IDW <- as.numeric(W %*% Tmax_no_14$z)
+@
+
+\noindent One can informally verify the computed predictions by comparing them to those given by \fn{idw} in {\bf gstat}. We see that the two results are very close; numerical mismatches of this order of magnitude are likely to arise from the slightly different way the IDW weights are computed in {\bf gstat} (and it is possible that you get different, but still small, mismatches on your computer).
+
+<<size='footnotesize'>>=
+summary(Tmax_July_idw$var1.pred - z_pred_IDW)
+@
+
+
+\subsection*{Generic Kernel Smoothing and Cross-Validation}
+
+One advantage of implementing IDW from scratch is that now we can change the kernel function to whatever we want and compare predictions from different kernel functions. We implement a kernel smoother below, where the kernel is a Gaussian radial basis function given by \ifstandalone
+\begin{equation}
+k(\{\bs_{ij};t_j\},\{\bs_0;t_0\};\theta) \equiv \exp\left( - \frac{1}{\theta} d(\{\bs_{ij};t_j\},\{\bs_0;t_0\})^2\right),
+\label{eq:radialbasiskern}
+\end{equation}
+\else \eqref{eq:radialbasiskern} \fi with $\theta = 0.5$.
+
+<<>>=
+theta <- 0.5                       # set bandwidth
+Wt_Gauss <- function(theta, dist_mat) exp(-dist_mat^2/theta)
+Wtilde <- Wt_Gauss(theta = 0.5, dist_mat = pred_obs_dist_mat)
+Wtilde_rsums <- rowSums(Wtilde)    # normalizing factors
+W <- Wtilde/Wtilde_rsums           # normalized kernel weights
+z_pred2 <- W %*% Tmax_no_14$z      # predictions
+@
+
+
+<<echo=FALSE, results='hide', fig.keep = 'none'>>=
+DE_pred$var2.pred <- z_pred2
+png("./img/Chapter_3/Guasskernel_pred.png",width = 1600,height=1000,res=300)
+stplot(DE_pred[,,"var2.pred"],
+       main = "Predictions (degrees Fahrenheit)",
+       layout = c(3, 2),
+       col.regions = color_pal)
+dev.off()
+@
+
+
+The vector \cc{z\_pred2} can be assigned to the prediction grid \cc{pred\_grid} and plotted using {\bf ggplot2} as shown above. Note that the the predictions are similar, but not identical, to those produced by IDW. But which predictions are the best in terms of squared prediction error? A method commonly applied to assess goodness of fit is known as \emph{cross-validation} (CV). CV also allows us to choose bandwidth parameters (i.e., $\alpha$ or $\theta$) that are optimal for a given data set. See Section~\ref{sec:ValCrosVal} for more discussion on CV.
+
+To carry out CV, we need to fit the model using a subset of the data (known as the training set), predict at the data locations that were omitted (known as the validation set), and compute a \emph{discrepancy}, usually the squared error, between the predicted and observed values. If we leave one data point out at a time, the procedure is known as leave-one-out cross-validation (LOOCV). We denote the sum of the discrepancies for a particular bandwidth parameter $\theta$ as the LOOCV score, $CV_{(m)}(\theta)$ (note that $m$, here, is the number of folds used in the cross-validation; in LOOCV, the number of folds is equal the number of data points, $m$).
+
+The LOOCV for simple predictors, like kernel smoothers, can be computed analytically without having to refit; see Appendix \ref{sec:AppendSmooth}. Since the data set is reasonably small, it is feasible here to do the refitting with each data point omitted (since each prediction is just an inner product of two vectors). The simplest way to do LOOCV in this context is to compute the pairwise distances between \emph{all} observation locations and the associated kernel-weight matrix, and then to select the appropriate rows and columns from the resulting matrix to do prediction at a left-out observation; this is repeated for every observation.
+
+The distances between all observations are computed as follows.
+<<>>=
+obs_obs_dist_mat <- rdist(select(Tmax, lon, lat, day),
+                          select(Tmax, lon, lat, day))
+
+@
+\noindent A function that computes the LOOCV score is given as follows.
+<<>>=
+LOOCV_score <- function(Wt_fun, theta, dist_mat, Z) {
+  Wtilde <- Wt_fun(theta, dist_mat)
+  CV <- 0
+  for(i in 1:length(Z)) {
+    Wtilde2 <- Wtilde[i,-i]
+    W2 <- Wtilde2 / sum(Wtilde2)
+    z_pred <- W2 %*% Z[-i]
+    CV[i] <- (z_pred - Z[i])^2
+  }
+  mean(CV)
+}
+@
+
+The function takes as arguments the kernel function that computes the kernel weights \args{Wt\_fun}; the kernel bandwidth parameter \args{theta}; the full distance matrix \args{dist\_mat}; and the data \args{Z}.  The function first constructs the kernel-weights matrix for the given bandwith. Then, for the $i$th observation, it selects the $i$th row and excludes the $i$th column from the kernel-weights matrix and assigns the resulting vector to \cc{Wtilde2}. This vector contains the kernel weights for the $i$th observation location (which is now a prediction location) with the weights contributed by this $i$th observation removed. This vector is normalized and then cross-multiplied with the data to yield the prediction. This is done for all $i = 1,\dots,n$, and then the mean of the squared errors is returned. To see which of the two predictors is ``better,'' we now simply call \fn{LOOCV\_score} with the two different kernel functions and bandwidths.
+
+<<>>=
+LOOCV_score(Wt_fun = Wt_IDW,
+            theta = 5,
+            dist_mat = obs_obs_dist_mat,
+            Z = Tmax$z)
+
+LOOCV_score(Wt_fun = Wt_Gauss,
+            theta = 0.5,
+            dist_mat = obs_obs_dist_mat,
+            Z = Tmax$z)
+@
+
+Clearly the Gaussian kernel smoother has performed marginally better than IDW in this case. But how do we know the chosen kernel bandwidths are suitable? Currently we do not, as these were set by simply ``eye-balling'' the predictions and assessing visually whether they looked suitable or not. An objective way to set the bandwidth parameters is to put them equal to those values that minimize the LOOCV scores. This can be done by simply computing \fn{LOOCV\_score} for a set, say 21, of plausible bandwidths and finding the minimum. We do this below for both IDW and the Gaussian kernel.
+
+<<eval = FALSE>>=
+theta_IDW <- seq(4, 6, length = 21)
+theta_Gauss <- seq(0.1, 2.1, length = 21)
+CV_IDW <- CV_Gauss <- 0
+for(i in seq_along(theta_IDW)) {
+  CV_IDW[i] <- LOOCV_score(Wt_fun = Wt_IDW,
+                           theta = theta_IDW[i],
+                           dist_mat = obs_obs_dist_mat,
+                           Z = Tmax$z)
+
+  CV_Gauss[i] <- LOOCV_score(Wt_fun = Wt_Gauss,
+                          theta = theta_Gauss[i],
+                          dist_mat = obs_obs_dist_mat,
+                          Z = Tmax$z)
+}
+@
+
+<<echo = FALSE, eval = FALSE>>=
+save(theta_IDW, theta_Gauss, CV_IDW, CV_Gauss, file = "STRbook/data/Lab3_1_LOOCV.rda")
+@
+
+<<echo = FALSE>>=
+data("Lab3_1_LOOCV", package = "STRbook")
+@
+
+\noindent The plots showing the LOOCV scores as a function of $\alpha$ and $\theta$ for the IDW and Gaussian kernels, respectively\ifstandalone , \else ~(Figure \ref{fig:LOOCV}), \fi exhibit clear minima when plotted, which is very typical of plots of this kind.
+
+<<eval=FALSE, fig.keep = 'none', results = 'hide'>>=
+par(mfrow = c(1,2))
+plot(theta_IDW, CV_IDW,
+     xlab = expression(alpha),
+     ylab = expression(CV[(m)](alpha)),
+     ylim = c(7.4, 8.5), type = 'o')
+plot(theta_Gauss, CV_Gauss,
+     xlab = expression(theta),
+     ylab = expression(CV[(m)](theta)),
+     ylim = c(7.4, 8.5), type = 'o')
+@
+
+<<results = 'hide', echo=FALSE, fig.keep = 'none'>>=
+png("./img/Chapter_3/LOOCV.png",width = 2400,height=1000,res=300)
+par(mfrow = c(1,2), mar=c(4,5,1,1))
+plot(theta_IDW, CV_IDW,
+     xlab = expression(alpha),
+     ylab = expression(CV[(m)](alpha)),
+     ylim=c(7.4,8.5),
+     type = 'o')
+plot(theta_Gauss, CV_Gauss,
+     xlab = expression(theta),
+     ylab = expression(CV[(m)](theta)),
+     ylim=c(7.4,8.5),
+     type = 'o')
+dev.off()
+@
+
+
+\noindent The optimal inverse-power and minimum LOOCV score for IDW are
+<<>>=
+theta_IDW[which.min(CV_IDW)]
+min(CV_IDW)
+@
+\noindent The optimal bandwidth and minimum LOOCV score for the Gaussian kernel smoother are
+<<>>=
+theta_Gauss[which.min(CV_Gauss)]
+min(CV_Gauss)
+@
+\noindent Our choice of $\alpha = 5$ was therefore (sufficiently close to) optimal when doing IDW, while a bandwidth of $\theta = 0.6$ is better for the Gaussian kernel than our initial choice of $\theta = 0.5$. It is clear from the results that the Gaussian kernel predictor with $\theta = 0.6$ has, in this example, provided superior performance to IDW with $\alpha = 5$, in terms of mean-squared-prediction error.
+
+<<echo=FALSE, eval = FALSE>>=
+## EXACT LOOCV (GAM Wood book)
+dist_mat <- fields::rdist(select(Tmax,lon,lat,day),
+                          select(Tmax,lon,lat,day))
+
+thetap <- seq(0.1,2,by=0.1)
+Vo <- sapply(thetap,function(theta) {
+  Wtilde <- exp(-dist_mat^2/theta)
+  W <- Wtilde/rowSums(Wtilde)
+  z_pred <- W %*% filter(Tmax)$z
+  mean((Tmax$z - z_pred)^2 / (1 - diag(W))^2)
+})
+plot(thetap,Vo)
+## Actually slower!
+@
+
+\ifstandalone
+\bibliography{LitReviewBib,LitReviewR}
+\fi
+
+\end{document}

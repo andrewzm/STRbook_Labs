@@ -1,0 +1,274 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap3_Lab3}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\addcontentsline{toc}{section}{Lab 3.3: Regression Models for Forecasting}
+\section*{Lab 3.3: Regression Models for Forecasting}
+\markright{LAB 3.3: REGRESSION MODELS FOR FORECASTING}
+
+In this Lab we fit a simple linear model to every pixel in the SST data set, and we use these models to predict SST for a month in which we have no SST data. The models will simply contain an intercept and a single covariate, namely the Southern Oscillation Index (SOI). The SOI data we use here are supplied with {\bf STRbook} and were retrieved from \url{https://www.esrl.noaa.gov/psd/gcos_wgsp/Timeseries/SOI/}.
+
+For this Lab we need the usual data-wrangling and plotting packages, as well as the packages {\bf broom} and {\bf purrr} for fitting and predicting with multiple models simultaneously.
+
+<<message=FALSE,results='hide',warning=FALSE>>=
+library("broom")
+library("dplyr")
+library("ggplot2")
+library("STRbook")
+library("purrr")
+library("tidyr")
+@
+
+In the first section of this Lab we tidy up the data to obtain the SST data frame from the raw data. You may also skip this section  by loading \cc{SST\_df} from {\bf STRbook}, and fast-forwarding to the section that is concerned with fitting the data.
+
+<<>>=
+data("SST_df", package = "STRbook")
+@
+
+<<echo = FALSE>>=
+rm(SST_df)
+@
+\subsection*{Tidying Up the Data}
+
+The first task in this Lab is to wrangle the SST data into a long-format data frame that is amenable to linear fitting and plotting. Recall from Lab 2.3 that the SST data are provided in three data frames, one describing the land mask, one containing the SST values in wide format, and one containing the coordinates.
+
+<<>>=
+data("SSTlandmask", package = "STRbook")
+data("SSTdata", package = "STRbook")
+data("SSTlonlat", package = "STRbook")
+@
+
+We first combine the land mask data with the coordinates data frame.
+
+<<>>=
+lonlatmask_df <- data.frame(cbind(SSTlonlat, SSTlandmask))
+names(lonlatmask_df) <- c("lon", "lat", "mask")
+@
+
+\noindent Then we form our SST data frame in wide format by attaching \cc{SSTdata} to the coordinate-mask data frame.
+
+<<>>=
+SSTdata <- cbind(lonlatmask_df, SSTdata)
+@
+
+\noindent Finally, we use \fn{gather} to put the data frame into long format.
+
+<<>>=
+SST_df <- gather(SSTdata, date, sst, -lon, -lat, -mask)
+@
+
+Our data frame now contains the SST data, but the \cc{date} field contains as entries \cc{V1}, \cc{V2}, \dots, which were the names of the columns in \cc{SSTdata}.
+
+<<>>=
+SST_df %>% head(3)
+@
+
+\noindent We replace this \cc{date} field with two fields, one containing the month and one containing the year. We can do this by first creating a mapping table that links \cc{V1} to January 1970, \cc{V2} to February 1970, and so on, and then merging using \fn{left\_join}.
+
+<<message = FALSE, results = 'hide'>>=
+date_grid <- expand.grid(Month = c("Jan", "Feb", "Mar", "Apr",
+                                   "May", "Jun", "Jul", "Aug",
+                                   "Sep", "Oct", "Nov", "Dec"),
+                         Year = 1970:2002,
+                         stringsAsFactors =  FALSE)
+date_grid$date <- paste0("V", 1:396)
+SST_df <- left_join(SST_df, date_grid) %>%
+          select(-date)
+@
+
+\noindent For good measure, we also add in the \cc{date} field again but this time in month--year format.
+
+<<>>=
+SST_df$date <- paste(SST_df$Month, SST_df$Year)
+SST_df %>% head(3)
+@
+
+
+\noindent Next, we set SST data that are coincident with land locations to \num{NA}:
+
+<<>>=
+SST_df$sst<- ifelse(SST_df$mask == 0, SST_df$sst, NA)
+
+@
+
+\noindent Our SST data frame is now in place. The following code plots a series of SSTs leading up to the 1997 El Ni\~no event\ifstandalone\else; see Figure~\ref{fig:SSTaproct97}\fi.
+
+<<results = 'hide', fig.keep = 'none', warning = FALSE>>=
+g <- ggplot(filter(SST_df, Year == 1997 &  # subset by month/year
+                      Month %in% c("Apr","Aug","Jun","Oct"))) +
+    geom_tile(aes(lon, lat,
+                  fill = pmin(sst, 4))) +  # clamp SST at 4deg
+    facet_wrap(~date, dir = "v") +         # facet by date
+    fill_scale(limits = c(-4, 4),          # color limits
+               name = "degC") +            # legend title
+    theme_bw() + coord_fixed()             # fix scale and theme
+@
+
+<<echo = FALSE>>=
+ggsave(g, file="img/Chapter_3/SST_1997.png",dpi=300,width=8,height=3.6)
+@
+
+Now we need to add the SOI data to the SST data frame. The SOI time series is available as a 14-column data frame, with the first column containing the year, the next 12 columns containing the SOI for each month in the respective year, and the last column containing the mean SOI for that year. In the following, we remove the annual average from the data frame, which is in wide format, and then put it into long format using \fn{gather}.
+
+<<>>=
+data("SOI", package = "STRbook")
+SOI_df <- select(SOI, -Ann) %>%
+          gather(Month, soi, -Year)
+@
+
+\noindent Finally, we use \fn{left\_join} to merge the SOI data and the SST data.
+
+<<>>=
+SST_df <- left_join(SST_df, SOI_df,
+                    by = c("Month", "Year"))
+@
+
+
+<<echo = FALSE>>=
+save(SST_df, file = "data/SST_df.rda")
+@
+
+\subsection*{Fitting the Models Pixelwise}
+
+In this section we fit linear time-series models to the SSTs in each pixel using data up to April 1997. We first create a data frame containing the SST data between January 1970 and April 1997.
+
+<<>>=
+SST_pre_May <- filter(SST_df, Year <= 1997) %>%
+               filter(!(Year == 1997 &
+                        Month %in% c("May", "Jun", "Jul",
+                                     "Aug", "Sep", "Oct",
+                                     "Nov", "Dec")))
+@
+
+\noindent Next, as in Lab 3.2, we use {\bf purrr} and  {\bf broom} to construct a nested data frame that contains a linear model fitted to every pixel. We name the function that fits the linear model at a single pixel to the data over time as \fn{fit\_one\_pixel}.
+
+<<>>=
+fit_one_pixel <- function(data)
+                 mod <- lm(sst ~ 1 + soi, data = data)
+
+pixel_lms <- SST_pre_May %>%
+             filter(!is.na(sst)) %>%
+             group_by(lon, lat) %>%
+             nest() %>%
+             mutate(model = map(data, fit_one_pixel)) %>%
+             mutate(model_df = map(model, tidy))
+@
+
+\noindent The string of commands above describes an operation that is practically identical to what we did in Lab 3.2. We take the data, filter them to remove missing data, group by pixel, create a nested data frame, fit a model to each pixel, and extract a data frame containing information on the linear fit by pixel. The first three records of the nested data frame are as follows.
+
+<<>>=
+pixel_lms %>% head(3)
+@
+
+To extract the model parameters from the linear-fit data frames, we use \fn{unnest}:
+
+<<>>=
+lm_pars <- pixel_lms %>%
+           unnest(model_df)
+@
+
+\noindent For each pixel, we now have an estimate of the intercept and the effect associated with the covariate \cc{soi}, as well as other information such as the $p$-values.
+
+<<echo = FALSE>>=
+options(digits = 3)
+options(width = 60)
+@
+
+<<>>=
+head(lm_pars, 3)
+@
+
+\noindent We can plot spatial maps of the intercept and the regression coefficient associated with \cc{soi} directly. We first merge this data frame with the coordinates data frame using \fn{left\_join}, which also contains land pixels. In this way, regression coefficients over land pixels are marked as \num{NA}, which is appropriate.
+
+<<message=FALSE, results = 'hide'>>=
+lm_pars <- left_join(lonlatmask_df, lm_pars)
+@
+
+\noindent The following code plots the spatial intercept and the spatial regression coefficient associated with \cc{soi}\ifstandalone\else; see the top panels of Figure~\ref{fig:SSTsoipred}\fi.
+
+<<>>=
+g2 <- ggplot(filter(lm_pars, term == "(Intercept)" | mask == 1)) +
+    geom_tile(aes(lon, lat, fill = estimate)) +
+    fill_scale() +
+    theme_bw() + coord_fixed()
+
+g3 <- ggplot(filter(lm_pars, term == "soi" | mask == 1)) +
+    geom_tile(aes(lon, lat, fill = estimate)) +
+    fill_scale() +
+    theme_bw() + coord_fixed()
+@
+
+\subsection*{Predicting SST Pixelwise}
+
+We now use the linear models at the pixel level to predict the SST in October 1997 using the SOI index for that month. The SOI for that month is extracted from \cc{SOI\_df} as follows.
+
+<<>>=
+soi_pred <- filter(SOI_df, Month == "Oct" & Year == "1997") %>%
+            select(soi)
+@
+
+\noindent We next define the function that carries out the prediction at the pixel level. The function takes a linear model \args{lm} and the SOI at the prediction date \args{soi\_pred}, runs the \fn{predict} function for this date, and returns a data frame containing the prediction and the prediction standard error.
+
+<<>>=
+predict_one_pixel <- function(lm, soi_pred) {
+    predict(lm,                           # linear model
+            newdata = soi_pred,           # pred. covariates
+            interval = "prediction") %>%  # output intervals
+    data.frame() %>%                      # convert to df
+    mutate(se = (upr-lwr)/(2 * 1.96)) %>% # comp pred. se
+    select(fit, se)                       # return fit & se
+  }
+@
+
+Prediction proceeds at each pixel by calling \fn{predict\_one\_pixel} on each row in our nested data frame \cc{pixel\_lms}.
+
+<<>>=
+SST_Oct_1997 <- pixel_lms %>%
+                mutate(preds = map(model,
+                                   predict_one_pixel,
+                                   soi_pred = soi_pred)) %>%
+                unnest(preds)
+@
+
+\noindent We have unnested the \cc{preds} data frame above to save the fit and prediction standard error as fields in the \cc{SST\_Oct\_1997} data frame. You can type \cc{SST\_Oct\_1997}  \%\textgreater\% \fn{head}\cc{(}\num{3}\cc{)} to have a look at the first three records. It is straightforward to plot the prediction and prediction standard error from \cc{SST\_Oct\_1997}\ifstandalone\else; see the middle and bottom panels of Figure~\ref{fig:SSTsoipred}\fi. This is left as an exercise for the reader.
+
+<<message=FALSE, echo=FALSE, fig.keep='none', results='hide', warning = FALSE>>=
+SST_Oct_1997 <- SST_Oct_1997 %>%
+                right_join(lonlatmask_df) %>%
+                left_join(SST_df %>% filter(Year == 1997 & Month == "Oct"))
+
+g4 <- ggplot(SST_Oct_1997) +
+    scale_colour_distiller(palette="Spectral", name = "degC", limits = c(-4,4)) +
+    theme_bw() + coord_fixed() +
+    geom_contour(aes(lon,lat,z = pmin(pmax(sst,-4),4),colour=..level..))
+
+g5 <- ggplot(SST_Oct_1997) +
+    #geom_tile(aes(lon,lat,fill = pmin(pmax(fit,-1),1))) +
+    scale_colour_distiller(palette="Spectral", name = "degC", limits = c(-1,1)) +
+    theme_bw() + coord_fixed() +
+    geom_contour(aes(lon,lat,z = pmin(pmax(fit,-1),1),colour=..level..))
+
+g6 <- ggplot(SST_Oct_1997) +
+    geom_tile(aes(lon,lat,fill = se)) +
+    scale_fill_distiller(palette="Spectral", name = "degC") +
+    theme_bw() + coord_fixed()
+
+library("gridExtra")
+ggsave(g2,file="img/Chapter_3/SST_Oct_1997_Int.png",dpi=300,width=5,height=1.8)
+ggsave(g3,file="img/Chapter_3/SST_Oct_1997_SOI.png",dpi=300,width=5,height=1.8)
+ggsave(g4,file="img/Chapter_3/SST_Oct_1997_Obs.png",dpi=300,width=5,height=1.8)
+ggsave(g5,file="img/Chapter_3/SST_Oct_1997_Pred.png",dpi=300,width=5,height=1.8)
+ggsave(g6,file="img/Chapter_3/SST_Oct_1997_PE.png",dpi=300,width=5,height=1.8)
+@
+
+\end{document}

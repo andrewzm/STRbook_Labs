@@ -1,0 +1,415 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab1}}}
+{\standalonetrue}
+{\standalonefalse}
+
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+
+\addcontentsline{toc}{section}{Lab 4.1: Spatio-Temporal Kriging with {\bf gstat}}
+\section*{Lab 4.1: Spatio-Temporal Kriging with {\bf gstat}}
+\markright{Lab 4.1: Spatio-Temporal Kriging with {\bf gstat}}
+
+In this Lab we go through the process of carrying out spatio-temporal universal kriging using the semivariogram with the package {\bf gstat}. We focus on the maximum temperature data in the NOAA data set (\cc{Tmax}) in July 1993. In addition to the packages used \ifstandalone earlier \else in Chapter 2 \fi for data wrangling, we need {\bf RColorBrewer} to color some of the surfaces that will be produced.
+
+<<message=FALSE,results='hide', warning=FALSE>>=
+library("sp")
+library("spacetime")
+library("ggplot2")
+library("dplyr")
+library("gstat")
+library("RColorBrewer")
+library("STRbook")
+library("tidyr")
+@
+
+<<echo=FALSE,message=FALSE,results='hide', warning=FALSE>>=
+library("grid")
+library("gridExtra")
+@
+
+For S-T kriging of the maximum-temperature data set in July 1993, we need to fit a parametric function to the empirical semivariogram \cc{vv} computed in Lab 2.3. The code is reproduced below for completeness.
+
+<<warning=FALSE, results = 'hide'>>=
+data("STObj3", package = "STRbook")
+STObj4 <- STObj3[, "1993-07-01::1993-07-31"]
+vv <- variogram(object = z ~ 1 + lat, # fixed effect component
+                data = STObj4,      # July data
+                width = 80,         # spatial bin (80 km)
+                cutoff = 1000,      # consider pts < 1000 km apart
+                tlags = 0.01:6.01)  # 0 days to 6 days
+
+@
+
+\noindent A number of covariance-function models are available with the package {\bf gstat}; see the {\bf gstat} vignette ``spatio-temporal-kriging'' for details by typing
+
+<<eval=FALSE>>=
+vignette("spatio-temporal-kriging")
+@
+
+\ifstandalone
+The first semivariogram we consider here corresponds to the spatio-temporal separ\-able covariance function
+\begin{equation}\label{eq:sep_cov}
+c^{(sep)}(\bh  ; \tau) \equiv c^{(s)}(\| \bh \|) \cdot c^{(t)}(|\tau|),
+\end{equation}
+in which we let both covariance functions, $c^{(s)}(\cdot)$ and $c^{(t)}(\cdot)$, take the form
+\begin{equation}\label{eq:exp_cov}
+%0 & \textrm{otherwise} \end{array}  \right..
+c(d) = b_1\exp(-\phi d) + b_2I(d=0),
+\end{equation}
+where $b_1$ and $b_2$ are parameters that need to be estimated and $I(\cdot)$ is the indicator function.
+\else
+The first semivariogram we consider here corresponds to the spatio-temporal separable covariance function in \eqref{eq:sep_cov} and \eqref{eq:exp_cov}.
+\fi Observe from the vignette that a separable covariance function \eqref{eq:sep_cov} corresponds to a semivariogram of the form
+$$
+\gamma^{\mathrm{sep}}(\bh; \tau) = \mathrm{sill}\cdot\left(\bar\gamma^{(s)}(\| \bh \|) + \bar\gamma^{(t)}(|\tau|) - \bar\gamma^{(s)}(\| \bh \|)\bar\gamma^{(t)}(|\tau|)\right),
+$$
+where the ``standardized'' semivariograms $\bar\gamma^{(s)}$ and $\bar\gamma^{(t)}$ have separate nugget effects and sills equal to 1.
+
+A spatio-temporal semivariogram is constructed with {\bf gstat} using the function \fn{vgmST}. The argument \args{stModel}\cc{ = }\strn{"separable"} is used to define a separable model, while the function \fn{vgm} is used to construct the individual semivariograms (one for space and one for time). Several arguments can be passed to \fn{vgm}. The first four, which we use below, correspond to the partial sill, the model type, the range, and the nugget, respectively. The argument \args{sill} that is supplied to \fn{vgmST} defines the joint spatio-temporal sill. The numbers used in their definition are initial values supplied to the optimization routine used for fitting in the function \fn{fit.StVariogram}, which fits \cc{sepVgm} to \cc{vv}. These initial values should be reasonable -- for example, the length scale $\phi$ can be set to a value that spans 10\% of the spatial/temporal domain, and the variances/sills can be set such that they have similar orders of magnitude to the total variance of the measurements.
+
+<<>>=
+sepVgm <- vgmST(stModel = "separable",
+                space = vgm(10, "Exp", 400, nugget = 0.1),
+                time = vgm(10, "Exp", 1, nugget = 0.1),
+                sill = 20)
+sepVgm <- fit.StVariogram(vv, sepVgm)
+@
+
+\ifstandalone The second model we fit has a joint covariance function over space and time, in which the temporal separation is scaled to account for the different nature (anisotropy) of space and time. This model is given by
+\begin{equation}\label{eq:metric_cov}
+c^{(st)}(\| \bv \|) \equiv b_3\exp(-\phi \| \bv \|) + b_4I(\| \bv \| = 0),
+\end{equation}
+\noindent where, for any two spatio-temporal coordinates $(\bs_i', t_i)'$ and $(\bs_j', t_j)'$, $\bv \equiv (\bs_i', at_i)' - (\bs_j', at_j)'$. Here, $a$ is the scaling factor used for generating space-time anisotropy, and is also the argument \args{stAni} supplied to \fn{vgmST}. This parameter can be initially set by considering orders of magnitudes -- if the spatial field is evolving on scales of the order of hundreds of kilometers and the temporal evolution is on scales of the order of days, then an initial value of \args{stAni}\cc{ = }\num{100} is reasonable. This covariance function is sometimes referred to as a \emph{metric} covariance function.
+\else
+The second model we fit has the covariance function given in \eqref{eq:metric_cov}. For this model, the function \fn{vgmST} takes the \args{joint} semivariogram as an argument, as well as the sill (\args{sill}) and the scaling factor (\args{stAni}), denoted by $a$ in $\bv$, defined just below \eqref{eq:metric_cov}. This parameter can be initially set by considering orders of magnitudes -- if the spatial field is evolving on scales of the order of hundreds of kilometers and the temporal evolution has a scale on the order of days, then an initial value of \args{stAni}\cc{ = }\num{100} is reasonable.\fi
+
+<<Gstat_sep_metric_variograms>>=
+metricVgm <- vgmST(stModel = "metric",
+                   joint = vgm(100, "Exp", 400, nugget = 0.1),
+                   sill = 10,
+                   stAni = 100)
+metricVgm <- fit.StVariogram(vv, metricVgm)
+@
+
+We can compare the fits of the two semivariograms by checking the mean squared error of the fits. These can be found by directly accessing the final function value of the optimizer used by \fn{fit.StVariogram}.
+
+<<>>=
+metricMSE <- attr(metricVgm, "optim")$value
+sepMSE <- attr(sepVgm, "optim")$value
+@
+
+\noindent Here the variable \cc{metricMSE} is \Sexpr{round(metricMSE,1)} while \cc{sepMSE} is \Sexpr{round(sepMSE,1)}, indicating that the separable semivariogram gives a better fit to the empirical semivariogram in this case. The fitted semivariograms can be plotted using the standard \fn{plot} function.
+
+<<fig.keep='none'>>=
+plot(vv, list(sepVgm, metricVgm), main = "Semi-variance")
+@
+\ifstandalone \else \noindent Contour plots of the the fitted variograms are shown in the bottom panels of Figure \ref{fig:cov_fits}. The corresponding stationary S-T covariance function is obtained from \eqref{eq:var2ndorder}.\fi
+
+
+<<echo=FALSE,message=FALSE,results='hide',warning=FALSE>>=
+#plot(vv, list(sepVgm, metricVgm),layout=c(3,1),main="Semi-variance")
+## Plot separable
+ht_grid <- expand.grid(h = seq(0,600,by=50),
+                       t = seq(0,6,by=0.5))
+gammah <- variogramLine(sepVgm$space,
+                        dist_vector = ht_grid$h) %>%
+         transmute(h = dist,gammah = gamma)
+gammat <- variogramLine(sepVgm$time,
+                        dist_vector = ht_grid$t) %>%
+         transmute(t = dist,gammat = gamma)
+gamma_sep <- cbind(gammah,gammat) %>%
+             mutate(gamma_sep = sepVgm$sill *
+                        (gammah + gammat - gammah*gammat),
+                    C_sep =  sepVgm$sill - gamma_sep)
+g1 <- ggplot(gamma_sep) +
+    geom_contour(aes(h,t,z=C_sep,colour=..level..)) +
+    scale_colour_gradient(low="black",high="red",name="cov") +
+    ylim(c(0,5.1)) +
+    xlab("distance (km)\n") +
+     ylab("time lag (days)\n") +
+    theme_bw()
+par(mfrow=c(1,3))
+
+## Plot metric
+C_metric <- variogramLine(metricVgm$joint,
+                               covariance = TRUE,
+                               dist_vector = sqrt(ht_grid$h^2 +
+                                 (metricVgm$stAni*ht_grid$t)^2)) %>%
+         cbind(ht_grid) %>%
+         transmute(C = gamma,h=h,t=t)
+
+g2 <- ggplot(C_metric) +
+        geom_contour(aes(h,t,z=C,colour=..level..)) +
+    scale_colour_gradient(low="black",high="red",name="cov") +
+    ylim(c(0,5.1)) +
+    xlab("distance (km)\n") +
+     ylab("time lag (days)\n") +
+    theme_bw()
+
+
+## Plot empirical
+emp_df <- data.frame(h = vv$spacelag,
+                     t = vv$timelag,
+                     gamma = vv$gamma) %>%
+          mutate(C = max(gamma) - gamma) %>%
+          mutate(h = ifelse(h == 0, h,h+40))
+g3 <- ggplot()  +
+    geom_contour(data=filter(emp_df,h < 700),
+                 aes(h,t,z=C,colour=..level..)) +
+    scale_colour_gradient(low="black",high="red",name="cov") +
+    ylim(c(0,5.1)) +
+    xlab("distance (km)\n") +
+    ylab("time lag (days)\n") +
+    theme_bw()
+
+## Plot empirical separable
+emp_df$t <- as.numeric(emp_df$t)
+emp_df_h_only <- filter(emp_df,t==min(t)) %>% transmute(h,Ch=C/max(C))
+emp_df_t_only <- filter(emp_df,h==min(h)) %>% transmute(t,Ct=C/max(C))
+emp_df_sep <- left_join(emp_df,emp_df_h_only) %>%
+              left_join(emp_df_t_only) %>%
+              mutate(C_sep_emp = Ch*Ct*max(emp_df$C))
+
+g4 <- ggplot()  +
+     geom_contour(data=filter(emp_df_sep,h < 700),
+                 aes(h,t,z=C_sep_emp,colour=..level..)) +
+    scale_colour_gradient(low="black",high="red",name="cov") +
+    ylim(c(0,5.1)) +
+    xlab("distance (km)\n") +
+    ylab("time lag (days)\n") +
+    theme_bw()
+
+ggsave(grid.arrange(g3,g4,g1,g2,nrow=2), file="./img/Chapter_4/contour_plots.png",height=5.5,width=8)
+@
+
+<<echo=FALSE,eval=FALSE,warning=FALSE,message=FALSE>>=
+## Doing the same thing with lattice::contourplot
+p1 <- lattice::contourplot(C_sep ~ h + t,
+                           data=gamma_sep,
+                           at=seq(18,2, by=-2),
+                           xlab="distance (km)",
+                           ylab = "time lag (days)")
+
+p2 <- lattice::contourplot(C ~ h + t,
+                           data=C_metric,
+                           at=seq(18,2, by=-2),
+                           xlab="distance (km)",
+                           ylab = "time lag (days)")
+
+p3 <- lattice::contourplot(C ~ h + t,
+                           data=filter(emp_df,h < 700),
+                           at=seq(18,2, by=-2),
+                           xlab="distance (km)",
+                           ylab = "time lag (days)")
+
+p4 <- lattice::contourplot(C_sep_emp ~ h + t,
+                           data=filter(emp_df_sep,h < 700),
+                           at=seq(18,2, by=-2),xlab="distance (km)", ylab = "time lag (days)")
+
+
+{print(p3, position = c(0, 0.5, 0.5, 1), more = TRUE)
+print(p4, position = c(0.5, 0.5, 1, 1), more = TRUE)
+print(p1, position = c(0, 0, 0.5, 0.5),more=TRUE)
+print(p2, position = c(0.5, 0, 1, 0.5))}
+@
+
+Next, we use the fitted S-T covariance models for prediction using S-T kriging, in this case \emph{universal} S-T kriging since we are treating the latitude coordinate as a covariate. First, we need to create a space-time prediction grid. For our spatial grid, we consider 20 spatial locations between  100$^\circ$W and 80$^\circ$W, and 20 spatial locations between 32$^\circ$N and 46$^\circ$N. In the code below, when converting to \cc{SpatialPoints}, we ensure that the coordinate reference system (CRS) of the prediction grid is the same as that of the observations.
+
+<<>>=
+spat_pred_grid <- expand.grid(
+                      lon = seq(-100, -80, length = 20),
+                      lat = seq(32, 46, length = 20)) %>%
+            SpatialPoints(proj4string = CRS(proj4string(STObj3)))
+gridded(spat_pred_grid) <- TRUE
+@
+
+\noindent For our temporal grid, we consider six equally spaced days in July 1993.
+
+<<>>=
+temp_pred_grid <- as.Date("1993-07-01") + seq(3, 28, length = 6)
+@
+
+\noindent We can then combine \cc{spat\_pred\_grid} and \cc{temp\_pred\_grid} to construct an \cc{STF} object for our space-time prediction grid.
+
+<<>>=
+DE_pred <- STF(sp = spat_pred_grid,    # spatial part
+               time = temp_pred_grid)  # temporal part
+@
+
+%At the time of writing, \fn{krigeST} could not handle missing observations in an \cc{STFDF}.
+Since there are missing observations in \cc{STObj4}, we first need to cast \cc{STObj4} into either an \cc{STSDF} or an \cc{STIDF}, and remove the data recording missing observations. For simplicity here, we consider the \cc{STIDF} (considering \cc{STSDF} would be around twice as fast). Also, in order to show the capability of S-T kriging to predict across time, we omitted data on 14 July 1993 from the data set.
+
+<<>>=
+STObj5 <- as(STObj4[, -14], "STIDF")         # convert to STIDF
+STObj5 <- subset(STObj5, !is.na(STObj5$z))   # remove missing data
+@
+
+\noindent Now we can call \fn{krigeST} using \cc{STObj5} as our data.
+
+<<Gstat_gridded_prediction>>=
+pred_kriged <- krigeST(z ~ 1 + lat,         # latitude trend
+                       data = STObj5,       # data set w/o 14 July
+                       newdata = DE_pred,   # prediction grid
+                       modelList = sepVgm,  # semivariogram
+                       computeVar = TRUE)   # compute variances
+@
+
+
+To plot the predictions and accompanying prediction standard errors, it is straightforward to use the function \fn{stplot}. First, we define our color palette  using the function \fn{brewer.pal} and the function \fn{colorRampPalette} (see help files for details on what these functions do).
+
+<<Gstat_gridded_ST_plots,eval=FALSE>>=
+color_pal <- rev(colorRampPalette(brewer.pal(11, "Spectral"))(16))
+@
+
+\noindent Second, we call the \fn{stplot} function with the object containing the results.
+
+<<Gstat_gridded_ST_plots2,eval=FALSE>>=
+stplot(pred_kriged,
+       main = "Predictions (degrees Fahrenheit)",
+       layout = c(3, 2),
+       col.regions = color_pal)
+@
+
+<<echo=FALSE,message=FALSE,results='hide',fig.keep='none'>>=
+color_pal <- rev(colorRampPalette(brewer.pal(11, "Spectral"))(16))
+png("./img/Chapter_4/STkrig_pred.png",width = 1600,height=1000,res=300)
+stplot(pred_kriged,main="Predictions (degrees Fahrenheit)",
+       layout=c(3,2),
+       col.regions=color_pal)
+dev.off()
+@
+
+\noindent The prediction (kriging) standard errors can be plotted in a similar way.
+
+<<Gstat_gridded_ST_plots3,eval=FALSE,fig.keep='none'>>=
+pred_kriged$se <- sqrt(pred_kriged$var1.var)
+stplot(pred_kriged[, , "se"],
+       main = "Prediction std. errors (degrees Fahrenheit)",
+       layout = c(3, 2),
+       col.regions = color_pal)
+@
+
+<<echo=FALSE,results='hide',message=FALSE,fig.keep='none'>>=
+png("./img/Chapter_4/STkrig_se.png",width = 1600,height=1000,res=300)
+pred_kriged$se <- sqrt(pred_kriged$var1.var)
+stplot(pred_kriged[,,"se"],
+       main="Prediction std. errors (degrees Fahrenheit)",
+       layout=c(3,2),
+       col.regions=color_pal)
+dev.off()
+@
+
+
+<<Gstat_CV_pred,echo=FALSE,cache=FALSE,eval=FALSE>>=
+pred_cv <- data.frame(lon = cv_lon,
+                      lat = cv_lat) %>%
+            SpatialPoints(proj4string=CRS("+proj=longlat"))
+DE_cv <- STF(sp=pred_cv, time=xts(1:20,order.by =seq(as.Date("1993-07-01"),
+                                                     as.Date("1993-07-20"),1)))
+
+cv_kriged <- krigeST(z~1 + lat, data=temp_STFDF, newdata = DE_cv,
+                     modelList = metricVgm,
+                     computeVar = TRUE)
+@
+
+
+
+
+
+Spatio-temporal kriging as shown in this Lab is relatively quick and easy to implement for small data sets, but it starts to become prohibitive as data sets grow in size, unless some approximation is used. For example, the function \fn{krigeST} allows one to use the argument \args{nmax} to determine the maximum number of observations to use when doing prediction. The predictor is no longer optimal, but it is close enough to the optimal predictor in many cases of practical interest.
+
+
+<<echo=FALSE>>=
+## LONGITUDINAL DATA EXAMPLE
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+set.seed(1)
+T <- 20
+beta0 <- 25
+beta <- c(0.1, 0.2, 0.35)
+alpha0 <- 1*rnorm(90)
+alpha1 <- 0.03*rnorm(90)
+t <- 1:T
+Y <- NULL
+for(i in 1:3) {
+    Ywide <- t(beta0 + alpha0 + outer(beta[i] + alpha1, t) + 0.1*matrix(rnorm(T*90), 90, T)) %>%
+        as.data.frame()
+    Ylong <- gather(Ywide, person, Y)
+    Ylong$person <- paste0(Ylong$person,i)
+    Y <- rbind(Y, cbind(Ylong, data.frame(i = factor(i, levels =1:3), t = rep(1:T, 90))))
+}
+g <- ggplot(Y) + geom_line(aes(x = t, y = Y, group = person, colour = i), alpha = 0.4, show.legend=FALSE) + theme_bw() +
+    xlab("Time") + ylab("Response")
+ggsave(g, file = "img/Chapter_4/LMMlongexample2.png",width = 6,height= 3)
+@
+
+<<echo = FALSE>>=
+## SIMPLE KRIGING SCHEMATIC PLOT
+library(ggplot2)
+H <- matrix(c(0,0,4,4,0,0,4,4,4,4,0,0,4,4,0,0),4,4)
+T <- matrix(c(0,0.8,0,0.7,0.8,0,0.8,0.1,0,0.8,0,0.7,0.7,0.1,0.7,0),4,4)
+h <- matrix(c(1,1,3,3),4,1)
+t <- matrix(c(0.3,0.5,0.3,0.4),4,1)
+Z <- matrix(c(15,22,17,23),4,1)
+beta <- 20
+x <- 1
+
+d <- 1
+a <- 2
+b <- .2
+s2 <- 2
+
+Cz = (s2*exp((-b^2 * H^2)/(a^2 * T^2 + 1)))/(a^2 * T^2 + 1)^(.5)
+C0 = (s2*exp((-b^2 * h^2)/(a^2 * t^2 + 1)))/(a^2 * t^2 + 1)^(.5)
+
+w = t(C0) %*% solve(Cz)
+Yhat = x*beta + w %*% (Z - x*beta);
+varY = s2 - t(C0) %*% solve(Cz) %*% C0
+
+locs <- matrix(c(2,2,6,6,3,0.2,1,0.2,0.9,0.5),5,2)
+locs <- data.frame(s1 = locs[,1],
+                      s2 = locs[,2],
+                      type = c("o","o","o","o","p"))
+
+lns <- data.frame(s1 = c(locs[1:4,1], rep(locs[5,1],4)),
+                  s2 = c(locs[1:4,2], rep(locs[5,2],4)),
+                  grp = c(1:4,1:4))
+
+txt <- data.frame(s1 = c(2.1,2.1,6.1,6.1,3.2,2.67,4.79,2.59,4.79) + 0.3, s2 = c(0.18,1.02,0.18,0.92,0.5,0.34,0.35,0.8,0.7), str = c("15","22","17","23","17.67","(0.54)","(0.26)","(0.18)","(0.13)"))
+
+g1 <- ggplot(locs) +
+    geom_line(data = lns, aes(s1,s2,group=grp), linetype=2) +
+    geom_point(aes(s1,s2,colour=type),
+               size = 2, show.legend = FALSE) +
+    scale_y_reverse() + theme_bw() +
+    coord_fixed(xlim=c(0,8),ylim=c(0,1.3),ratio = 5) +
+    xlab('Space (s)') +
+    ylab('Time (t)') +
+    scale_colour_manual(values=c("blue","red")) +
+    geom_text(data = txt, aes(s1,s2,label=str)) +
+    theme(axis.text=element_text(size=14),
+          axis.title=element_text(size=14))
+ggsave(g1, file = "./img/Chapter_4/Ch4_STkrig_example2.png",
+       width = 6, height = 5)
+@
+
+<<echo = FALSE, results = 'hide', message=FALSE>>=
+t <- seq(0,20,by = 0.1)
+png("./img/Chapter_4/exp_cov.png",width = 2000,height=1000,res=300)
+par(mai=c(0.9,1.0,0.22,0.22))
+plot(t, 2.5*exp(-t/2), type = 'l',
+     xlab = expression(tau),
+     ylab = expression(paste(c^(t), (tau))))
+dev.off()
+@
+\end{document}

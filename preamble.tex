@@ -1,0 +1,265 @@
+%% MARGINS FROM ROB
+% 6 1/8 x 9 1/4: 4.75 x 7.5
+% 7 x 10: 5.6 x 8.6
+% 7 1/2 x 9 1/4: 6 x 7.5
+
+\newif\ifcomments
+\newif\ifchecktext
+
+%\commentsfalse
+\commentstrue
+%\checktextfalse
+\checktexttrue
+
+\usepackage{standalone}
+\usepackage{newclude}
+%\topmargin=-.5in
+\topmargin=-.550in
+\oddsidemargin=.25in
+\evensidemargin=.25in
+%\usepackage[emindex]{apacite}
+\usepackage{amssymb,amsmath,amstext}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{color}
+\usepackage{dcolumn}
+\usepackage{dsfont}
+\usepackage{emptypage}
+\usepackage{epsfig}
+\usepackage[T1]{fontenc}
+\usepackage{ifthen}
+\usepackage{longtable}
+\usepackage{index}
+\usepackage{natbib}
+\usepackage{setspace}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{threeparttable}
+\usepackage{times}
+\usepackage{titlesec}
+\usepackage[nottoc,notlot,notlof]{tocbibind}
+%\usepackage{tocbibind}
+\usepackage{url}
+\usepackage{verbatim}
+
+%\widowpenalty10000
+%\clubpenalty10000
+
+
+\let\origdoublepage\cleardoublepage
+\newcommand{\clearemptydoublepage}{%
+	\clearpage
+	{\pagestyle{empty}\origdoublepage}%
+}
+
+\newif\ifstandalone
+\newif\ifstandalonechapter
+
+%\usepackage{doublespace}
+
+%\newcommand\myTwoFig[2]{%
+%  \raisebox{-\height}{#1}%
+%  \raisebox{-\height}{#2}%
+%}
+%\def\rf{\par\noindent\hangindent\parindent\hangafter1}
+
+\usepackage[most]{tcolorbox}% http://ctan.org/pkg/tcolorbox
+
+\newtheorem{technote}{Technical Note}[chapter]
+
+\newtheorem{algorithmnote}{Algorithm}[chapter]
+\newtheorem{algorithmnoteapp}{Algorithm}[section]
+
+% A special box for this
+\newtcolorbox{highlightbox}[1][]{colback=yellow, align=center,boxrule=0pt,boxsep=0pt,#1}
+
+\usepackage[margin=0.75in,includefoot,includehead, paperwidth = 178mm, paperheight = 254mm]{geometry}
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{} % sets both header and footer to nothing
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\sectionmark}[1]{}
+%\fancyfoot[CE,CO]{\copyright~C.K. Wikle, A. Zammit-Mangion, N. Cressie}
+\fancyhead[LE,RO]{\thepage}
+\fancypagestyle{Rfunfooter}{
+  \pagestyle{fancy}
+  %\fancyhf{}
+  \renewcommand{\footrulewidth}{0.5pt}
+   \fancyfoot[L]{{\small{Pages refer to the end of the code chunk containing the function. The function may hence appear on the page preceding that listed when the code chunk spans more than one page.}}}
+   \fancyhead[LE,RO]{\thepage}
+   \fancyhead[RE,LO]{\leftmark}
+}
+
+\fancypagestyle{Rfunfootermain}{
+  \pagestyle{fancy}
+  %\fancyhf{}
+  \renewcommand{\footrulewidth}{0.5pt}
+   \fancyfoot[L]{{\small{Pages refer to the end of the code chunk containing the function. The function may hence appear on the page preceding that listed when the code chunk spans more than one page.}}}
+   \fancyhead[LE,RO]{ }
+   \fancyhead[RE,LO]{ }
+}
+
+
+\newcommand{\wrapcolorbox}[2][]{%
+  \colorbox{#1}{\parbox{\dimexpr\linewidth-2\fboxsep}{#2}}
+}
+
+
+\definecolor{mycolor}{rgb}{0.122, 0.435, 0.698}% Rule colour
+\definecolor{Rtipcolor}{rgb}{0.122, 0.435, 0.698}% Rule colour
+\definecolor{Advcolor}{rgb}{0.422, 0.135, 0.698}% Rule colour
+\makeatletter
+\newcommand{\Rtip}[1]{%
+  \vspace{0.2in}
+  \begin{tcolorbox}[colframe=Rtipcolor,boxrule=0.5pt,arc=4pt,
+      left=6pt,right=6pt,top=6pt,bottom=6pt,boxsep=0pt,width=\linewidth,breakable]
+    #1
+  \end{tcolorbox}
+  \vspace{0.2in}
+}
+\newcommand{\Adv}[1]{%
+  \vspace{0.2in}
+  \begin{tcolorbox}[colframe=Advcolor,boxrule=0.5pt,arc=4pt,
+      left=6pt,right=6pt,top=6pt,bottom=6pt,boxsep=0pt,width=\linewidth,breakable]
+    #1
+  \end{tcolorbox}
+  \vspace{0.2in}
+}
+
+
+\ifcomments
+  \newcommand{\red}{\textcolor{red}}
+\else
+  \newcommand{\red}[1]{\null}
+\fi
+
+
+\ifchecktext
+  \newcommand{\tcheck}{\textcolor{blue}}
+\else
+  \newcommand{\tcheck}{\textcolor{black}}
+\fi
+
+
+\newcommand{\mbf}[1]{\mathbf{#1}}
+\newcommand{\mbv}[1]{\mbox{\boldmath$#1$\unboldmath}}
+\newcommand{\bfu}{{ \bf u}}
+\def\ba{\mathbf{a}}
+\def\bb{\mathbf{b}}
+\def\bc{\mathbf{c}}
+\def\bd{\mathbf{d}}
+\def\be{\mathbf{e}}
+\def\bg{\mathbf{g}}
+\def\bh{\mathbf{h}}
+\def\bk{\mathbf{k}}
+\def\bm{\mathbf{m}}
+\def\br{\mathbf{r}}
+\def\bs{\mathbf{s}}
+\def\bu{\mathbf{u}}
+\def\bv{\mathbf{v}}
+\def\bw{\mathbf{w}}
+\def\bx{\mathbf{x}}
+\def\by{\mathbf{y}}
+\def\bz{\mathbf{z}}
+\def\bA{\mathbf{A}}
+\def\bB{\mathbf{B}}
+\def\bC{\mathbf{C}}
+\def\bD{\mathbf{D}}
+\def\bE{\mathbf{E}}
+\def\bF{\mathbf{F}}
+\def\bG{\mathbf{G}}
+\def\bH{\mathbf{H}}
+\def\bI{\mathbf{I}}
+\def\bJ{\mathbf{J}}
+\def\bK{\mathbf{K}}
+\def\bL{\mathbf{L}}
+\def\bM{\mathbf{M}}
+\def\bP{\mathbf{P}}
+\def\bQ{\mathbf{Q}}
+\def\bR{\mathbf{R}}
+\def\bS{\mathbf{S}}
+\def\bT{\mathbf{T}}
+\def\bU{\mathbf{U}}
+\def\bV{\mathbf{V}}
+\def\bW{\mathbf{W}}
+\def\bX{\mathbf{X}}
+\def\bY{\mathbf{Y}}
+\def\bZ{\mathbf{Z}}
+\def\bfzero{\mathbf{0}}
+\def\bfone{\mathbf{1}}
+
+\newcommand{\intd}{\textrm{d}}
+\newcommand{\bfomega}{\mbox{\boldmath $\omega$}}
+\newcommand{\bfalpha}{\mbox{\boldmath $\alpha$}}
+\newcommand{\bfbeta}{\mbox{\boldmath $\beta$}}
+\newcommand{\bfxi}{\mbox{\boldmath $\xi$}}
+\newcommand{\bfeta}{\mbox{\boldmath $\eta$}}
+\newcommand{\bftau}{\mbox{\boldmath $\tau$}}
+\newcommand{\bfdelta}{\mbox{\boldmath $\delta$}}
+\newcommand{\bftheta}{\mbox{\boldmath $\theta$}}
+\newcommand{\bfTheta}{\mbox{\boldmath $\Theta$}}
+\newcommand{\bfell}{\mbox{\boldmath $\ell$}}
+\newcommand{\bfepsilon}{\mbox{\boldmath $\varepsilon$}}
+\newcommand{\bfPhi}{\mbox{\boldmath $\Phi$}}
+\newcommand{\bfPsi}{\mbox{\boldmath $\Psi$}}
+\newcommand{\bfpsi}{\mbox{\boldmath $\psi$}}
+\newcommand{\bfphi}{\mbox{\boldmath $\phi$}}
+\newcommand{\bfmu}{\mbox{\boldmath $\mu$}}
+\newcommand{\bfsigma}{\mbox{\boldmath $\sigma$}}
+\newcommand{\bfnu}{\mbox{\boldmath $\nu$}}
+\newcommand{\bfgamma}{\mbox{\boldmath $\gamma$}}
+\newcommand{\bflambda}{\mbox{\boldmath $\lambda$}}
+\newcommand{\bfLambda}{\mbox{\boldmath $\Lambda$}}
+\newcommand{\bfSigma}{\mbox{\boldmath $\Sigma$}}
+\newcommand{\bfPi}{\mbox{\boldmath $\Pi$}}
+\newcommand{\var}{\textrm{var}}
+\newcommand{\cov}{\textrm{cov}}
+\newcommand{\bdiag}{\textrm{bdiag}}
+\newcommand{\corr}{\textrm{corr}}
+\newcommand{\pr}{\textrm{Pr}}
+\newcommand{\fn}[1]{\texttt{\hlkwd{#1}}}
+\newcommand{\num}[1]{\texttt{\hlnum{#1}}}
+\newcommand{\strn}[1]{\texttt{\hlstr{#1}}}
+\newcommand{\args}[1]{\texttt{\hlkwc{#1}}}
+\newcommand{\R}{\texttt{R}}
+\newcommand{\cc}[1]{\texttt{#1}}
+\def\deg{$^{\circ}$ }
+\newcommand{\rf}{\vskip .1in\par\sloppy\hangindent=1pc\hangafter=1
+                 \noindent}
+
+
+\textwidth= 5.5in
+\textheight = 7.7in
+
+\newcommand{\indexprint}[1]{#1\index{#1}}
+%\makeindex[name=person,title={Index of persons}]
+\makeindex
+\newindex{aut}{adx}{and}{AuthorIndex}
+\newindex{Rfun}{adx2}{and2}{R Function Index}
+
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\Gau}{Gau}
+\DeclareMathOperator{\trace}{trace}
+\DeclareMathOperator{\tr}{tr}
+
+\let\MakeUppercase\relax
+
+%% \usepackage{xwatermark}
+%% \usepackage{tikz}
+%% \newsavebox\mybox
+%% \savebox\mybox{\tikz[color=black,opacity=0.1]\node{$\mathcal{Blah}$};}
+%% \newwatermark*[
+%%   allpages,
+%%   angle=0,
+%%   scale=2.4,
+%%   xpos=44,
+%%   ypos=53
+%% ]{\usebox\mybox}
+
+%\usepackage{draftwatermark}
+%\SetWatermarkText{\begin{tabular}{c}  Preprint \\ 28 November 2018 \\  \copyright~Wikle, Zammit-Mangion, Cressie \\ Do Not Distribute! \end{tabular}}
+%\SetWatermarkScale{0.3}
+%\SetWatermarkColor{gray!20}
+
+\bibliographystyle{asa_edition}

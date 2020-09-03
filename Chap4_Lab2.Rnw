@@ -1,0 +1,293 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab2A}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\addcontentsline{toc}{section}{Lab 4.2:  Spatio-Temporal Basis Functions with {\bf FRK}}
+\section*{Lab 4.2:  Spatio-Temporal Basis Functions with {\bf FRK}}
+\markright{Lab 4.2:  Spatio-Temporal Basis Functions with {\bf FRK}}
+
+In this Lab we shall focus on modeling the maximum temperature in July 1993 from data in the NOAA data set using spatio-temporal basis functions. The packages we need are the following:
+
+<<message=FALSE,results='hide',warning=FALSE>>=
+library("dplyr")
+library("FRK")
+library("ggplot2")
+library("gstat")
+library("RColorBrewer")
+library("sp")
+library("spacetime")
+library("STRbook")
+library("tidyr")
+@
+
+
+<<echo=FALSE,message=FALSE,results='hide',warning=FALSE>>=
+library("grid")
+library("gridExtra")
+library("sp")
+sp::set_Polypath(FALSE)
+@
+
+%% GENERATE BASIS FUNCTIONS FIGURE
+<<Basis_functions,echo=FALSE,fig.keep="all",fig.height=3,warning=FALSE>>=
+df <- data.frame(s = seq(-1,1,length=100)) %>%
+      mutate(Cosine = cos(s*2*pi)*0.5,
+             Gaussian = exp(-s^2/(2*0.2^2)),
+             Wendland = fields::Wendland(abs(s),theta=0.6,dimension=1,k=2),
+             Bisquare = (1 - (s/0.5)^2)^2 * (abs(s) < 0.5),
+             Mexican_Hat = 0.9*pi^(-0.25)*(1-(s*4)^2)*exp(-(s*4)^2/2),
+             Linear_Element = as.numeric((1-2*abs(s))* I(abs(s) < 0.5))) %>%
+      gather(name,phi,-s)
+g <- ggplot(df) + geom_line(aes(s,phi)) + facet_grid(~name)  +
+    theme(axis.text.x=element_blank()) + theme_bw() + ylab(expression(phi(s)))
+ggsave(g, file="./img/Chapter_4/spat_basis_fn.png",height=2.5,width=8)
+@
+
+
+The package {\bf FRK} implements a low-rank approach to spatial and spatio-temporal modeling known as \emph{fixed rank kriging} (FRK). \ifstandalone FRK considers the random-effects model \begin{equation}
+Y(\bs;t) = \bx(\bs;t)'\bfbeta + \sum_{i=1}^{n_\alpha} \phi_{i}(\bs;t) \alpha_i + \nu(\bs;t),
+\label{eq:Yprocess_stbasis}
+\end{equation}
+where $\{\phi_{i}(\bs;t): i=1,\ldots,n_\alpha \}$ are specified basis functions evaluated at space-time location $(\bs;t)$, $\{\alpha_i : i=1,\ldots,n_\alpha \}$ are random effects, and $\nu(\bs;t)$ captures small-scale spatio-temporal variation not absorbed by the summation term. The random effects $\bfalpha  \sim Gau({\mbf 0},\bC_\alpha)$, where $\bfalpha \equiv (\alpha_1,\ldots,\alpha_{n_\alpha})'$.  Assume we are interested in the $Y$-process at $n_y$ spatio-temporal locations, which we denote by the vector $\bY$.  The process model then becomes
+\begin{equation}
+\bY = \bX \bfbeta + \bfPhi \bfalpha + \bfnu,
+\label{eq:Yprocess_basis_vec}
+\end{equation}
+where $i$th column of the $n_y \times n_\alpha$ matrix $\bfPhi$ corresponds to the $i$th basis function, $\phi_{i}(\cdot;\cdot)$ at all of the spatio-temporal locations ordered as given in $\bY$, and the vector $\bfnu$ also corresponds to the spatio-temporal ordering given in $\bY$ such that $\bfnu  \sim Gau({\mbf 0},\bC_\nu)$.  \else FRK considers the random-effects model \eqref{eq:Yprocess_stbasis}, sometimes known as the spatio-temporal random-effects model \citep{cressie2010fixed}\index[aut]{Cressie, N.}\index[aut]{Shi, T.}\index[aut]{Kang, E.~L.}, and provides functionality to the user for choosing the basis functions $\{\phi_i(\bs;t) : i = 1,\dots,n_\alpha\}$ from the data. \fi
+
+A key difference between {\bf FRK} and other geostatistical packages is that, in {\bf FRK}, modeling and prediction are carried out on a fine, regular discretization of the spatio-temporal domain. The small grid cells are known as \emph{basic areal units} (BAUs), and their primary utility is to account for problems of change of support (varying measurement footprint), which we do not consider in this Lab. \ifstandalone \else The package is loaded by typing in the console
+
+<<echo=TRUE,message=FALSE,results="hide",warning=FALSE>>=
+library("FRK")
+@
+\fi
+
+<<echo=FALSE,message=FALSE,results="hide",warning=FALSE>>=
+library("FRK")
+@
+
+ For spatio-temporal modeling and prediction, {\bf FRK} requires the user to provide the point-level data as objects of class \texttt{STIDF} \ifstandalone \else  (see p.\ \pageref{pg:ST-defs})\fi. Hence, for this exercise, we use \cc{STObj5} from Lab 3.1, which we reconstruct below (for completeness) from \cc{STObj3}.
+
+<<Gstat_modelling,cache=FALSE>>=
+data("STObj3", package = "STRbook")          # load STObj3
+STObj4 <- STObj3[, "1993-07-01::1993-07-31"] # subset time
+STObj5 <- as(STObj4[, -14], "STIDF")         # omit t = 14
+STObj5 <- subset(STObj5, !is.na(STObj5$z))   # remove NAs
+@
+
+The spatio-temporal BAUs are constructed using the function \fn{auto\_BAUs} which takes several arguments, as shown below and detailed using the in-line comments. For more details see \fn{help}\cc{(auto\_BAUs)}.  Note that as \args{cellsize} we chose \fn{c}\cc{(\num{1},\num{0.75},\num{1})} which indicates a BAU size of 1 degree longitude $\times$ 0.75 degrees latitude $\times$ 1 day -- this choice ensures that the BAUs are similar to the prediction grid used in Lab 3.1. The argument \args{convex} is an ``extension radius'' used in domain construction via the package {\bf INLA}. See the help file of \fn{inla.nonconvex.hull} for details.
+
+<<BAUs,message=FALSE,results='hide',cache=FALSE,echo=TRUE,warning=FALSE>>=
+BAUs <- auto_BAUs(manifold = STplane(),   # ST field on the plane
+                  type = "grid",          # gridded (not "hex")
+                  data = STObj5,          # data
+                  cellsize = c(1, 0.75, 1), # BAU cell size
+                  convex = -0.12,           # hull extension
+                  tunit = "days")           # time unit is "days"
+@
+
+The BAUs are of class \cc{STFDF} since they are three-dimensional pixels arranged regularly in both space and in time. To plot the spatial BAUs overlaid with the data locations, we run
+
+<<eval=FALSE>>=
+plot(as(BAUs[, 1], "SpatialPixels"))    # plot pixel BAUs
+plot(SpatialPoints(STObj5),
+     add = TRUE, col = "red")           # plot data points
+@
+
+
+\noindent This generates the left panel of Figure~\ref{fig:BAUs}. The BAUs, which we will also use as our prediction grid, overlap all the data points. The user has other options in BAU construction; for example, the following code generates \emph{hexagonal} BAUs using a convex hull for a boundary.
+
+
+<<BAUs_hex,message=FALSE,results='hide',cache=FALSE,echo=TRUE,warning=FALSE>>=
+BAUs_hex <- auto_BAUs(manifold = STplane(), # model on the plane
+                  type = "hex",             # hex (not "grid")
+                  data = STObj5,            # data
+                  cellsize = c(1, 0.75, 1), # BAU cell size
+                  nonconvex_hull = FALSE,   # convex hull
+                  tunit = "days")           # time unit is "days"
+@
+
+\noindent Plotting proceeds in a similar fashion, except that the first line in the code chunk above now becomes
+
+<<eval=FALSE>>=
+plot(as(BAUs_hex[, 1], "SpatialPolygons"))
+@
+
+\noindent This allows for the fact the the BAUs are now (hexagonal) polygons and not rectangular pixels. The resulting plot is shown in the right panel of Figure~\ref{fig:BAUs}.
+
+<<plotBAUs,echo=FALSE,message=FALSE,results='hide',fig.keep='none'>>=
+png('./img/Chapter_4/BAUs.png',width=6000,height=2000,res = 400)
+
+xmin <- min(coordinates(BAUs)[,1])
+xmax <- max(coordinates(BAUs)[,1])
+ymin <- min(coordinates(BAUs)[,2])
+ymax <- max(coordinates(BAUs)[,2])
+
+par(mfrow = c(1,2),mar=c(0,0,0,0))
+plot(as(BAUs[,1],"SpatialPixels"), xlim = c(xmin, xmax), ylim = c(ymin, ymax), asp = 1)
+plot(as(STObj5,"Spatial"),add=TRUE,col="red")
+
+plot(as(BAUs_hex[,1],"SpatialPolygons"), xlim = c(xmin, xmax), ylim = c(ymin, ymax), asp = 1)
+plot(as(STObj5,"Spatial"),add=TRUE,col="red")
+dev.off()
+@
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=\textwidth,angle=0]{img/Chapter_4/BAUs.png}
+\end{center}
+\caption{BAUs constructed for modeling and predicting maximum temperature from data in the NOAA data set. Left: Gridded BAUs arranged within a non-convex hull enclosing the data. Right: Hexagonal BAUs arranged within a convex hull enclosing the data.}
+\label{fig:BAUs}
+\end{figure}
+
+Next we construct the basis functions $\{\phi_i(\bs;t) : i = 1,\dots,n_\alpha\}$. In {\bf FRK}, these are constructed by taking the tensor product of spatial basis functions with temporal basis functions. Specifically, consider a set of $r_s$ spatial basis functions $\{\phi_{p}(\bs): p = 1,\dots,r_s\}$, and a set of $r_t$ temporal basis functions $\{\psi_{q}(t): q = 1,\dots,r_t\}$. Then we construct the set of spatio-temporal basis functions as $\{\phi_{st,u}(s,t) : u = 1,\dots,r_sr_t\} = \{\phi_{p}(\bs)\psi_{q}(t) : p = 1,\dots,r_s;\ q = 1,\dots,r_t\}$.
+
+\ifstandalone In principle any basis function can be used in {\bf FRK}, although these would need to be defined by the user. Examples of basis functions are given in Figure \ref{fig:spat_basis_fn} \else \fi The generic basis function that {\bf FRK} uses by default is the bisquare function (see Figure~\ref{fig:spat_basis_fn}) given by
+
+ \begin{equation*}%\label{eq:bisquare1D}
+ b(\bs,\bv) \equiv \left\{\begin{array}{ll} \{1 - (\|\bv- \bs\|/r)^2\}^2, &\| \bv -\bs\| \le r, \\
+ 0, & \textrm{otherwise}, \end{array} \right.
+ \end{equation*}
+\noindent where $r$ is the aperture parameter. Basis functions can be either regularly placed, or irregularly placed, and they are often multiresolutional. We choose two resolutions below, yielding $r_s = 94$ spatial basis functions in total, and place them irregularly in the domain. (Note that $r_s$ and the bisquare apertures are determined automatically by \fn{auto\_basis}.)
+
+ <<message=FALSE,results='hide'>>=
+ G_spatial <- auto_basis(manifold = plane(),      # fns on plane
+                         data = as(STObj5, "Spatial"), # project
+                         nres = 2,                     # 2 res.
+                         type = "bisquare",            # bisquare.
+                         regular = 0)                  # irregular
+@
+
+\ifstandalone
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=\textwidth,angle=0]{img/Chapter_4/spat_basis_fn.png}
+\end{center}
+\caption{Spatial basis functions commonly employed in spatio-temporal modeling depicted in one-dimensional space. From left to right: The bisquare function, cosine function, Gaussian function, linear element, Mexican-hat wavelet, and the first-order Wendland function.}
+\label{fig:spat_basis_fn}
+\end{figure}
+\fi
+
+Temporal basis functions also need to be defined. We use the function \fn{local\_basis} below to construct a regular sequence of $r_t = 20$ bisquare basis functions between day 1 and day 31 of the month. Each of these bisquare basis functions is assigned an aperture of 2 days; that is, the support of each bisquare function is 4 days. The temporal grid is defined through
+
+<<>>=
+t_grid <- matrix(seq(1, 31, length = 20))
+@
+
+\noindent The basis functions are constructed using the following commands.
+
+<<>>=
+G_temporal <- local_basis(manifold = real_line(),  # fns on R1
+                          type = "bisquare",       # bisquare
+                          loc = t_grid,            # centroids
+                          scale = rep(2, 20))      # aperture par.
+@
+
+Finally, we construct the $r_sr_t = 1880$ spatio-temporal basis functions by taking the tensor product of the spatial and the temporal ones, using the function \fn{TensorP}.
+
+<<>>=
+G <- TensorP(G_spatial, G_temporal)      # take the tensor product
+@
+
+\noindent The basis functions \cc{G\_spatial} and \cc{G\_temporal} can be visualized using the plotting function \fn{show\_basis}; see Figure~\ref{fig:ST_basis}. While the basis functions are of tensor-product form, the resulting S-T covariance function obtained from the spatio-temporal random effects model is not separable in space and time.
+
+<<results='hide',message=FALSE,echo=FALSE,fig.keep='none'>>=
+g1 <- show_basis(G_spatial) + xlab("lon (deg)") + ylab("lat (deg)") + coord_fixed()
+g2 <- show_basis(G_temporal) + xlab("t (days)") +ylab(expression(varphi(t)))
+g <- grid.arrange(g1,g2,nrow=1)
+ggsave(g, file="./img/Chapter_4/STbasis.png",height=3.2,width=8)
+@
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=\textwidth,angle=0]{img/Chapter_4/STbasis.png}
+\end{center}
+\caption{Spatial and temporal basis functions used to construct the spatio-temporal basis functions. Left: Locations of spatial basis functions (circles denote spatial support). Right: Temporal basis functions.}
+\label{fig:ST_basis}
+\end{figure}
+
+In {\bf FRK}, the fine-scale variation term at the BAU level, \eqref{eq:Yprocess_basis_vec}, is assumed to be Gaussian with covariance matrix proportional to $\diag(\{\sigma^2_{\nu,i}\})$, where $\{\sigma^2_{\nu,i}: i = 1,\dots,n_y\}$ are pre-specified at the BAU level (the constant of proportionality is then estimated by {\bf FRK}). Typically, these are related to some geographically related quantity such as surface roughness. In our case, we simply set $\sigma^2_{\nu,i} = 1$ for all $i$.
+
+<<>>=
+BAUs$fs = 1
+@
+
+The fine-scale variance at the BAU level is confounded with the measurement-error variance. In some cases, the measurement-error variance is known; when it is not (as in this case), one can carry out a simple analysis to estimate the value of the semivariogram at the origin. In this case, we simply assume that the nugget effect estimated when fitting the separable covariance function in Lab 4.1 is the measurement-error variance -- any residual nugget component is then assumed to be the fine-scale variance introduced as a consequence of the low-rank approximation to the process.  The measurement-error variance is specified in the \cc{std} field in the data \cc{ST} object.
+
+<<>>=
+STObj5$std <- sqrt(0.049)
+@
+
+\noindent The response variable and covariates are identified through a standard \cc{R} formula. In this case we use latitude as a covariate and set
+
+<<>>=
+f <- z ~ lat + 1
+@
+
+We are now ready to call the main function \fn{FRK}, which estimates all the unknown parameters in the models, including the covariance matrix of the basis-function coefficients and the fine-scale variance. We need to supply the formula, the data, the basis functions, the BAUs, and any other parameters configuring the expectation-maximization (EM) algorithm used for finding the maximum likelihood estimates. To reduce processing time, we have set the number of EM-algorithm steps to 3. Convergence of the EM algorithm can be assessed visually by setting \cc{\args{print\_lik} = \num{TRUE}} below.
+
+<<results='hide',message=FALSE,fig.keep='none'>>=
+S <- FRK(f = f,               # formula
+         data = list(STObj5), # (list of) data
+         basis = G,           # basis functions
+         BAUs = BAUs,         # BAUs
+         n_EM = 3,            # max. no. of EM iterations
+         tol = 0.01)          # tol. on change in log-likelihood
+@
+
+Once the model is fitted, prediction proceeds via the function \fn{predict}. If the argument \args{newdata} is not specified, then prediction is done at all the BAUs.
+
+<<>>=
+grid_BAUs <- predict(S)
+@
+
+\noindent The resulting object, \cc{grid\_BAUs}, is also of class \cc{STFDF}, and plotting proceeds as per Lab 4.1 using the \fn{stplot} function. \ifstandalone Plotting of the FRK predictions and prediction standard errors is left as an exercise. \else The resulting predictions and prediction standard errors are illustrated in Figure \ref{fig:pred_FRK}.\fi
+
+<<echo=FALSE,results='hide',fig.keep='none'>>=
+grid_BAUs@sp  <- SpatialPoints(grid_BAUs@sp)   # convert to Spatial points object
+gridded(grid_BAUs@sp) <- TRUE                          # and assert that it is gridded
+library(RColorBrewer)
+ colour_regions <- (brewer.pal(11, "Spectral") %>%     # construct spectral brewer palette
+                        colorRampPalette())(16) %>%    # at 16 levels
+                         rev()                         # reverse direction
+
+ grid_BAUs$mu_trunc <- pmin(pmax(grid_BAUs$mu,68),105)
+ png("./img/Chapter_4/FRK_pred.png",width = 1600,height=1000,res=300)
+ stplot(grid_BAUs[,c(4,9,14,19,24,29),"mu_trunc"],             # plot the FRK predictor
+      main="Predictions (degrees Fahrenheit)",          # title
+     layout=c(3,2),                                     # trellis layout
+     col.regions=colour_regions,                        # color scale
+     xlim=c(-100,-80),ylim=c(32,46),                    # axes limits
+     aspect=1)                                          # fixed aspect ratio
+ dev.off()
+@
+
+
+
+ <<FRK-se,echo=FALSE,results='hide',fig.keep='none'>>=
+ grid_BAUs$se <- pmax(pmin(sqrt(grid_BAUs$var),4.4),1.8)
+ png("./img/Chapter_4/FRK_se.png",width = 1600,height=1000,res=300)
+ stplot(grid_BAUs[,c(4,9,14,19,24,29),"se"],             # plot the FRK predictor
+       main="Prediction std. errors (degrees Fahrenheit)",          # title
+      layout=c(3,2),                                     # trellis layout
+      col.regions=colour_regions,                        # color scale
+      xlim=c(-100,-80),ylim=c(32,46),                    # axes limits
+      aspect=1)                                          # fixed aspect ratio
+ dev.off()
+ @
+
+
+
+
+\end{document}

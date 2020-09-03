@@ -1,0 +1,761 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap3_Lab2}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\addcontentsline{toc}{section}{Lab 3.2: Trend Prediction}
+\section*{Lab 3.2: Trend Prediction}
+\markright{LAB 3.2: TREND PREDICTION}
+
+There is considerable in-built functionality in \cc{R} for linear regression and for carrying out hypothesis tests associated with linear models. Several packages have also been written to extend functionality, and in this Lab we shall make use of {\bf leaps}, which contains functionality for stepwise regression; {\bf lmtest}, which contains a suite of tests to carry out on fitted linear models; and {\bf nlme}, which is a package generally used for fitting nonlinear mixed effects models (but we shall use it to fit linear models in the presence of correlated errors).
+
+<<message=FALSE, warning = FALSE>>=
+library("leaps")
+library("lmtest")
+library("nlme")
+@
+
+\noindent In addition, we use {\bf ape}, which is one of several packages that contain functionality for testing spatial or spatio-temporal independence with Moran's $I$ statistic; and we use {\bf FRK}, which contains functionality for constructing the basis functions \ifstandalone that we will use inside the linear regression. \else shown in Figure~\ref{fig:basis_lin_reg}. \fi  We also make use of {\bf broom} and {\bf purrr} to easily carry out multiple tests on groups within our data set.
+
+<<message=FALSE, warning = FALSE>>=
+library("ape")
+library("broom")
+library("FRK")
+library("purrr")
+@
+
+\noindent We need the following for plotting purposes.
+
+<<>>=
+library("lattice")
+library("ggplot2")
+library("RColorBrewer")
+@
+
+\noindent We also need the usual packages for data wrangling and handling of spatial/spatio-temporal objects as in the previous Labs.
+
+<<message=FALSE,results='hide',warning=FALSE>>=
+library("dplyr")
+library("gstat")
+library("sp")
+library("spacetime")
+library("STRbook")
+library("tidyr")
+@
+
+\subsection*{Fitting the Model}
+
+
+For this Lab we again consider the NOAA data set, specifically the maximum temperature data for the month of July 1993. These data can be extracted as follows.
+
+<<warning=FALSE>>=
+data("NOAA_df_1990", package = "STRbook")
+Tmax <- filter(NOAA_df_1990,       # subset the data
+              proc == "Tmax" &     # only max temperature
+              month == 7 &         # July
+              year == 1993)        # year of 1993
+@
+
+The linear model we fit has the form \ifstandalone
+\begin{equation}
+Z(\bs_i;t) = \beta_0 + \beta_1 X_1(\bs_i;t) + \ldots + \beta_p X_p(\bs_i;t) + e(\bs_i;t),
+\label{eq:ST_reg}
+\end{equation}
+for $i=1,\ldots,n$ and $t=1,\ldots,T$, where $\beta_0$ is the intercept and $\beta_j~(j > 0)$ is a regression coefficient associated with $X_j(\bs_i;t)$, the $j$th covariate at spatial location $\bs_i$ and time $t$.  We also assume independent errors such that $e(\bs_i;t) \sim \; indep. \; N(0,\sigma^2_e)$. We consider  a model with linear space-time interactions and a set of basis functions that fill the spatial domain:
+\begin{itemize}
+\item linear in $lon$-coordinate: $X_1(\bs_i;t) = s_{1,i}$,  for all $t$;
+\item linear in $lat$-coordinate: $X_2(\bs_i;t) = s_{2,i}$,  for all $t$;
+\item linear time (day) trend: $X_3(\bs_i;t) = t$, for all $\bs_i$;
+\item $lon$--$lat$ interaction: $X_4(\bs_i;t) = s_{1,i}s_{2,i}$, for all $t$;
+\item $lon$--$t$ interaction: $X_5(\bs_i;t) = s_{1,i}t_i$, for all $s_{2,i}$;
+\item $lat$--$t$ interaction: $X_6(\bs_i;t) = s_{2,i}t_i$, for all $s_{1,i}$;
+\item spatial basis functions: $X_j(\bs_i;t) = \phi_{j - 6}(\bs_i), j =7,\dots,18$, for all $t$.
+\end{itemize}
+\else \eqref{eq:ST_reg}, with the list of basis functions given in Section \ref{sec:reg_pred}. \fi  The set of basis functions can be constructed using the function  \fn{auto\_basis} in {\bf FRK}. The function takes as arguments \args{data}, which is a spatial object; \args{nres}, which is the number of ``resolutions'' to construct; and \args{type}, which indicates the type of basis function to use. Here we consider a single resolution of the Gaussian radial basis function; see Figure \ref{fig:basis_lin_reg}.
+
+\ifstandalone
+
+ \begin{figure}[t!]
+	\begin{center}
+		\includegraphics[width=\textwidth]{img/Chapter_3/basis_fns.png}
+		\caption{The time-invariant basis functions $\phi_1(\cdot),\dots,\phi_{12}(\cdot)$ used for regression prediction of the NOAA maximum temperature data in July 1993. \label{fig:basis_lin_reg}}
+	\end{center}
+\end{figure}
+
+\fi
+
+<<>>=
+G <- auto_basis(data = Tmax[,c("lon","lat")] %>%  # Take Tmax
+                       SpatialPoints(),           # To sp obj
+                nres = 1,                         # One resolution
+                type = "Gaussian")                # Gaussian BFs
+@
+
+These basis functions evaluated at data locations are then the covariates we seek for fitting the data. The functions are evaluated at any arbitrary location using the function \fn{eval\_basis}. This function requires the locations as a \cc{matrix} object, and it returns the evaluations as an object of class \cc{Matrix}, which can be easily converted to a \cc{matrix} as follows.
+
+<<>>=
+S <- eval_basis(basis = G,                     # basis functions
+                s = Tmax[,c("lon","lat")] %>%  # spat locations
+                     as.matrix()) %>%          # conv. to matrix
+     as.matrix()                               # results as matrix
+colnames(S) <- paste0("B", 1:ncol(S)) # assign column names
+@
+
+When fitting the linear model we shall use the convenient notation ``\cc{.}'' to denote ``all variables in the data frame'' as covariates. This is particularly useful when we have many covariates, such as the 12 basis functions above. Therefore, we first remove all variables (except the field \cc{id} that we shall omit manually later) that we do not wish to include in the model, and we save the resulting data frame as \cc{Tmax2}.
+
+
+<<>>=
+Tmax2 <- cbind(Tmax, S) %>%             # append S to Tmax
+         select(-year, -month, -proc,   # and remove vars we
+                -julian, -date)         # will not be using in
+                                        # the model
+@
+
+\noindent As we did in Lab 3.1, we also remove 14 July 1993 to see how predictions on this day are affected, given that we have no data on that day.
+
+<<>>=
+Tmax_no_14 <- filter(Tmax2, !(day == 14))  # remove day 14
+@
+
+We now fit the linear model using \fn{lm}. The formula we use is \verb|z ~ (lon + lat + day)^2 + .| which indicates that we have as covariates longitude, latitude, day, and all the interactions between them, as well as the other covariates in the data frame (the 12 basis functions) without interactions.
+
+
+<<>>=
+Tmax_July_lm <- lm(z ~ (lon + lat + day)^2 + .,     # model
+                   data = select(Tmax_no_14, -id))  # omit id
+@
+
+<<echo=FALSE, eval=FALSE, fig.keep = 'none', results = 'hide'>>=
+Tmax_slides_lm <- lm(z ~ (lon + lat + day)^2,     # model
+                   data = select(Tmax_no_14, -id))  # omit id
+Tmax_slides_no_14 <- Tmax_no_14
+Tmax_slides_no_14$residuals <- residuals(Tmax_slides_lm)
+Tmax_slides_no_14$fitted <- fitted(Tmax_slides_lm)
+g <- ggplot(filter(Tmax_slides_no_14, day %in% c(1,15,30))) +
+      scale_colour_distiller(palette="Spectral",
+                         name="degF") +  theme_bw()
+g1 <- g + geom_point(aes(lon, lat, colour = z)) +
+  facet_wrap(~ day, ncol = 3) + ggtitle("Maximum Temperature (degF)  -- Observed")
+g2 <- g + geom_point(aes(lon, lat, colour = fitted)) +
+  facet_wrap(~ day, ncol = 3) + ggtitle("Maximum Temperature (degF)  -- Fitted")
+g3 <- g + geom_point(aes(lon, lat, colour = residuals)) +
+  facet_wrap(~ day, ncol = 3) + ggtitle("Maximum Temperature (degF)  -- Residuals")
+gall <- gridExtra::grid.arrange(g1,g2,g3,nrow=3)
+ggsave(gall, file = "img/Chapter_3/NOAA_LM_fit.png", width = 6, height = 6)
+@
+
+\noindent The results of this fit can be viewed using $\fn{summary}$. Note that latitude is no longer considered a significant effect, largely because of the presence of the latitude-by-day interaction in the model, which is considered significant. \ifstandalone \else The output from \fn{summary} corresponds to what is shown in Table~\ref{tab:reg_results}. \fi
+
+<<echo = FALSE>>=
+options(width = 55)
+@
+
+
+<<size='footnotesize'>>=
+Tmax_July_lm %>% summary()
+@
+
+\subsubsection*{Correlated Errors}
+
+As we show later in this Lab, there is clearly correlation in the residuals, indicating that the fixed effects are not able to explain the spatio-temporal variability in the data. If we knew the spatio-temporal covariance function of these errors, we could then use generalized least squares to fit the model. For example, if we knew that the covariance function was a Gaussian function, isotropic, and with a range of $0.5$ (see Chapter 4 for more details on covariance functions), then we could fit the model as follows.
+
+<<cache = TRUE>>=
+Tmax_July_gls <- gls(z ~ (lon + lat + day)^2 + .,
+                     data = select(Tmax_no_14, -id),
+                     correlation = corGaus(value = 0.5,
+                                        form = ~ lon + lat + day,
+                                        fixed = TRUE))
+@
+
+\noindent Results of the linear fitting can be seen using \fn{summary}. Note that the estimated coefficients are quite similar to those using linear regression, but the standard errors are larger. \ifstandalone \else The output from \fn{summary} should correspond to what is shown in Table~\ref{tab:reg_results}.\fi
+
+\subsubsection*{Stepwise Selection}
+
+Stepwise selection is a procedure used to find a parsimonious model (where parsimony refers to a model with as few parameters as possible for a given criterion) from a large selection of explanatory variables, such that each variable is included or excluded in a \emph{step}. In the simplest of cases, a step is the introduction of a variable (always the case in forward selection) or the removal of a variable (always the case in backward selection).
+
+The function \fn{step} takes as arguments the initial (usually the intercept) model as an \cc{lm} object, the full model as its \args{scope} and, if \args{direction}\cc{ = }\strn{"forward"}, starts from an intercept model and at each step introduces a new variable that minimizes the Akaike information criterion (AIC) \ifstandalone\else (see Section~\ref{sec:InfoCrit}) \fi of the fitted model. The following \cc{for} loop retrieves the fitted model for each step of the stepwise AIC forward-selection method.
+
+<<results = 'hide'>>=
+Tmax_July_lm4 <- list()   # initialize
+for(i in 0:4) {           # for four steps (after intercept model)
+   ## Carry out stepwise forward selection for i steps
+   Tmax_July_lm4[[i+1]] <- step(lm(z ~ 1,
+                               data = select(Tmax_no_14, -id)),
+                               scope = z ~(lon + lat + day)^2 + .,
+                               direction = 'forward',
+                               steps = i)
+}
+@
+\noindent Each model in the list can be analyzed using \fn{summary}, as above.
+
+Notice from the output of \fn{summary} that \cc{Tmax\_July\_lm4[[\num{5}]]} contains the covariate \cc{lon} whose effect is not significant. This is fairly common with stepwise AIC procedures. One is more likely to include covariates whose effects are significant when minimizing the residual sum of squares at each step. This can be carried out using the function \fn{regsubsets} from the {\bf leaps} package, which can be called as follows.
+
+<<>>=
+regfit.full = regsubsets(z ~ 1 + (lon + lat + day)^2 + .,  # model
+                         data = select(Tmax_no_14, -id),
+                         method = "forward",
+                         nvmax = 4)                  # 4 steps
+@
+
+\noindent All information from the stepwise-selection procedure is available in the object returned by the \fn{summary} function.
+
+<<>>=
+regfit.summary <- summary(regfit.full)
+@
+
+\noindent You can type \cc{regfit.summary} to see which covariates were selected in each step of the algorithm. \ifstandalone \else The outputs from \fn{step} and \fn{regsubsets} are shown in Tables \ref{tab:step_results} and \ref{tab:step_rss_results_table}, respectively. \fi
+
+<<echo = FALSE>>=
+# Fit linear models to the sub-models so they look the same
+Tmax_July_lm4_rss <- list(lm(z ~ 1, data = select(Tmax_no_14, -id)))
+for(i in 1:4) {
+    formula <- paste0("z ~ 1 + ", paste(names(which(regfit.summary$which[i,])[-1]),
+                                      collapse = " + ")) %>% as.formula()
+  Tmax_July_lm4_rss[[i+1]] <- lm(formula, data = select(Tmax_no_14, -id))
+}
+@
+
+\subsubsection*{Multicollinearity}
+
+It is fairly common in spatio-temporal modeling to have multicollinearity, both in space and in time. For example, in a spatial setting, average salary might be highly correlated with unemployment levels, but both could be included in a model to explain life expectancy. It is beyond the scope of this \ifstandalone course \else book \fi to discuss methods to deal with multicollinearity, but it is important to be aware of its implications.
+
+Consider, for example, a setting where we have a 13th basis function that is simply the 5th basis function corrupted by some noise.
+
+<<>>=
+set.seed(1) # Fix seed for reproducibility
+Tmax_no_14_2 <- Tmax_no_14 %>%
+                mutate(B13 = B5 + 0.01*rnorm(nrow(Tmax_no_14)))
+@
+
+\noindent If we fit the same linear model, but this time we include the 13th basis function, then the effects of both the 5th and the 13th basis functions are no longer considered significant at the 1\% level, although the effect of the 5th basis function was considered very significant initially (without the 13th basis function being present).
+
+<<>>=
+Tmax_July_lm3 <- lm(z ~ (lon + lat + day)^2 + .,
+                   data = Tmax_no_14_2 %>%
+                          select(-id))
+@
+
+<<size='footnotesize'>>=
+summary(Tmax_July_lm3)
+@
+
+\noindent The introduction of the 13th basis function will not adversely affect the predictions and prediction standard errors, but it does compromise our ability to correctly interpret the fixed effects. Multicollinearity will result in a high positive or negative correlation between the estimators of the regression coefficients.  For example, the correlation matrix of the estimators of the fixed effects corresponding to these two basis functions is given by
+
+<<>>=
+vcov(Tmax_July_lm3)[c("B5", "B13"),c("B5", "B13")] %>%
+    cov2cor()
+@
+
+\subsection*{Analyzing the Residuals}
+
+Having fitted a spatio-temporal model, it is good practice to check the residuals. If they are still spatio-temporally correlated, then our model will not have captured adequately the spatial and temporal variability in the data. We extract the residuals from our linear model using the function \fn{residuals}.
+
+<<>>=
+Tmax_no_14$residuals <- residuals(Tmax_July_lm)
+@
+
+\noindent Now let us plot the residuals of the last eight days. Notice how these residuals\ifstandalone \else, shown in the bottom panel of Figure~\ref{fig:reg_residuals},\fi~are strongly spatially correlated. The triangles in the image correspond to the two stations whose time series of residuals we shall analyze later.
+
+<<fig.keep = 'none'>>=
+g <- ggplot(filter(Tmax_no_14, day %in% 24:31)) +
+  geom_point(aes(lon, lat, colour = residuals)) +
+  facet_wrap(~ day, ncol=4) +
+  col_scale(name = "degF") +
+  geom_point(data = filter(Tmax_no_14,day %in% 24:31 &
+                                        id %in% c(3810, 3889)),
+               aes(lon, lat), colour = "black",
+               pch = 2, size = 2.5) +
+  theme_bw()
+@
+
+<<eval = FALSE>>=
+print(g)
+@
+
+<<echo = FALSE>>=
+ggsave(g, file = "./img/Chapter_3/spatial_residuals.png", width = 10, height = 5)
+@
+
+
+\ifstandalone \noindent One of the most used tests for spatial dependence for lattice spatial data is Moran's $I$G test.  This can be applied to the data directly, or to the residuals from some spatial regression model.  Let $Z_i$ represent spatially referenced data (or residuals) for $i=1,\ldots,n$ spatial locations.  Then Moran's $I$ is calculated as
+\begin{equation}
+I = \frac{n \sum_{i=1}^n \sum_{j=1}^n w_{ij} (Z_i - \bar{Z})(Z_j - \bar{Z}) }{(\sum_{i=1}^n \sum_{j=1}^n w_{ij})(\sum_{i=1}^n (Z_i - \bar{Z})^2) },
+\label{eq:MoransI}
+\end{equation}
+where $\bar{Z} = (1/n)\sum_{i=1}^n Z_i$ is the spatial mean and $w_{ij}$ are spatial adjacency ``weights'' between location $i$ and location $j$ (where we require $w_{ii} = 0$ for all $i=1,\ldots,n$).  Thus, Moran's $I$ statistic is simply a weighted form of the usual Pearson correlation coefficient, where the weights are the spatial proximity weights, and it takes values between $-1$ and $1$.   If (\ref{eq:MoransI}) is positive, then neighboring values tend to have similar values, and if it is negative, then neighboring regions tend to have different values. \else \noindent We can use Moran's $I$ test, described in Technical Note \ref{technote:DependCheck}, to test for spatial dependence in the residuals on each day. \fi In the following code, we take each day in our data set, compute the distances, form the weight matrix, and carry out Moran's $I$ test using the function \fn{Moran.I} from the package {\bf ape}.
+
+<<>>=
+P <- list()                                 # init list
+days <- c(1:13, 15:31)                      # set of days
+for(i in seq_along(days)) {                 # for each day
+  Tmax_day <- filter(Tmax_no_14,
+                     day == days[i])        # filter by day
+  station.dists <- Tmax_day %>%             # take the data
+    select(lon, lat) %>%                    # extract coords.
+    dist() %>%                              # comp. dists.
+    as.matrix()                             # conv. to matrix
+  station.dists.inv <- 1/station.dists      # weight matrix
+  diag(station.dists.inv) <- 0              # 0 on diag
+  P[[i]] <- Moran.I(Tmax_day$residuals,     # run Moran's I
+                    station.dists.inv) %>%
+            do.call("cbind", .)             # conv. to df
+}
+@
+
+\noindent The object \cc{P} is a list of single-row data frames that can be collapsed into a single data frame by calling \fn{do.call} and proceeding to row-bind the elements of each list item together. We print the first six records of the resulting data frame below.
+
+<<>>=
+do.call("rbind", P) %>% head()
+@
+
+The maximum $p$-value from the 30 tests is \Sexpr{max(do.call("rbind",P)[,4])}, which is very small. Since we are in a multiple-hypothesis setting, we need to control the familywise error rate and, for a level of significance $\alpha$, reject the null hypothesis of no correlation only if the $p$-value is less than $c(\alpha)$ $(< \alpha)$, where $c(\cdot)$ is a correction function. In this case, even the very conservative Bonferroni correction (for which $c(\alpha) = \alpha / T$, where $T$ is the number of time points) will result in rejecting the null hypothesis at each time point.
+
+It is straightforward to extend Moran's $I$ test to the spatio-temporal setting, as one need only extend the concept of ``spatial distance'' to ``spatio-temporal distance.'' We are faced with the usual problem of how to appropriately scale time to make a Euclidean distance across space and time have a realistic interpretation. One way to do this is to fit a de\-pend\-ence model that allows for scaling in time, and subsequently scale time by an estimate of the scaling factor prior to computing the Euclidean distance. We shall work with one such model, which uses an anisotropic covariance function, in \ifstandalone the next Lab. \else Chapter 4. \fi For now, as we did with IDW, we do not scale time and compute distances on the spatio-temporal domain (which happens to be reasonable for these data).
+
+<<>>=
+station.dists <- Tmax_no_14 %>%  # take the data
+  select(lon, lat, day) %>%      # extract coordinates
+  dist() %>%                     # compute distances
+  as.matrix()                    # convert to matrix
+@
+
+\noindent We now need to compute the weights from the distances, set the diagonal to zero and call \fn{Moran.I}.
+
+<<>>=
+station.dists.inv <- 1/station.dists
+diag(station.dists.inv) <- 0
+Moran.I(Tmax_no_14$residuals, station.dists.inv)$p.value
+@
+
+\noindent Unsurprisingly, given what we saw when analyzing individual time slices, the $p$-value is very small, strongly suggesting that there is spatio-temporal dependence in the data.
+
+When the data are regularly spaced in time, as is the case here, one may also look at the ``temporal'' residuals at some location and test for temporal correlation in these residuals using the Durbin--Watson test. For example, consider the maximum temperature (\cc{Tmax}) residuals at stations 3810 and 3889.
+
+<<>>=
+TS1 <- filter(Tmax_no_14, id == 3810)$residuals
+TS2 <- filter(Tmax_no_14, id == 3889)$residuals
+@
+
+\noindent These residuals can be easily plotted using base \cc{R} graphics as follows\ifstandalone \else; see the top panel of Figure~\ref{fig:reg_residuals}\fi.
+
+<<fig.keep = 'none', results = 'hide'>>=
+par(mar=c(4, 4, 1, 1))
+plot(TS1,                           # Station 3810 residuals
+     xlab = "day of July 1993",
+     ylab = "residuals (degF)",
+     type = 'o', ylim = c(-8, 7))
+lines(TS2,                          # Station 3889 residuals
+      xlab = "day of July 1993",
+      ylab = "residuals (degF)",
+      type = 'o', col = "red")
+
+@
+
+<<echo = FALSE, results = 'hide', fig.keep = 'none'>>=
+png("./img/Chapter_3/temp_residuals.png", width = 2400, height=1000, res=300)
+par(mar=c(4,4,1,1))
+plot(TS1, xlab = "day of July 1993", ylab = "residuals (degF)", type = 'o', ylim = c(-8,7)) #main = "Station 3810")
+lines(TS2, xlab = "day of July 1993", ylab = "residuals (degF)", type = 'o', col="red") #main = "Station 3889",
+dev.off()
+@
+
+\noindent Note that there is clear temporal correlation in the residuals; that is,  residuals close to each other in time tend to be more similar than residuals further apart. It is also interesting to note that the residuals are correlated between the stations; that is, at the same time point, the residuals at both stations are more similar than at different time points. This is due to the spatial correlation in the residuals that was tested for above (these two stations happen to be quite close to each other; recall the previous image of the spatial residuals). One may also look at the \emph{correlogram} (the empirical autocorrelation function) of the residuals by typing \fn{acf}\cc{(TS1)} and \fn{acf}\cc{(TS2)}, respectively. From these plots it can be clearly seen that there is significant lag-1 correlation in both these residual time series.
+
+Now let us proceed with carrying out a Durbin--Watson test for the residuals at every station. This can be done using a \cc{for} loop as we did with Moran's $I$ test; however, we shall now introduce a more sophisticated way of carrying out multiple tests and predictions on groups of data within a data frame, using the packages {\bf tidyr}, {\bf purrr}, and {\bf broom}\ifstandalone . \else, which will also be used in Lab 3.3. \fi
+
+In Lab 2.1 we investigated data wrangling techniques for putting data that are in a data frame into groups using \fn{group\_by}, and then we performed an operation on each of those groups using \fn{summarise}. The grouped data frame returned by \fn{group\_by} is simply the original frame with each row associated with a group. A more elaborate representation of these data is in a \emph{nested data frame}, where we have a data frame containing one row \emph{for each group}. The ``nested'' property comes from the fact that we may have a data frame, conventionally under the field name ``data,'' for each group. For example, if we group \cc{Tmax\_no\_14} by \cc{lon} and \cc{lat}, we obtain the following first three records.
+
+<<>>=
+nested_Tmax_no_14 <- group_by(Tmax_no_14, lon, lat) %>% nest()
+head(nested_Tmax_no_14, 3)
+@
+
+\noindent Note the third column, \cc{data}, which is a column of \emph{tibbles} (which, for the purposes of this \ifstandalone course, \else book, \fi should be treated as sophisticated data frames). Next we define a function that takes the data frame associated with a single group, carries out the test (in this case the Durbin--Watson test), and returns the results. The function \fn{dwtest} takes an \cc{R} formula as the first argument and the data as the second argument. In this case, we test for autocorrelation in the residuals after removing a temporal (constant) trend and by using the formula \verb|residuals ~ 1|.
+
+<<>>=
+dwtest_one_station <- function(data)
+                        dwtest(residuals ~ 1, data = data)
+@
+
+\noindent Calling \fn{dwtest\_one\_station} for the data in the first record will carry out the test at the first station, in the second record at the second station, and so on. For example,
+
+<<eval=FALSE>>=
+dwtest_one_station(nested_Tmax_no_14$data[[1]])
+@
+
+\noindent carries out the Durbin--Watson test on the residuals at the first station.
+
+To carry out the test on each record in the nested data frame, we use the function \fn{map} from the package {\bf purrr}. For example, the command
+
+<<eval = FALSE>>=
+map(nested_Tmax_no_14$data, dwtest_one_station) %>% head()
+@
+
+\noindent shows the test results for the first six stations. These results can be assigned to another column within our nested data frame using \fn{mutate}. These results are of class \cc{htest} and not easy to analyze or visualize in their native form. We therefore use the function \fn{tidy} from the package {\bf broom} to extract the key information from the test (in this case the statistic, the $p$-value, the method, and the hypothesis) and put it into a data frame. For example,
+
+<<>>=
+dwtest_one_station_tidy <- nested_Tmax_no_14$data[[1]] %>%
+                           dwtest_one_station() %>%
+                           tidy()
+@
+
+\noindent tidies up the results at the first station. The first three columns of the returned data are
+
+<<>>=
+dwtest_one_station_tidy[, 1:3]
+@
+
+To assign the test results to each record in the nested data frame as added fields (instead of as another data frame), we then use the function \fn{unnest}. In summary, the code
+
+<<warnings=FALSE>>=
+Tmax_DW_no_14 <- nested_Tmax_no_14 %>%
+    mutate(dwtest = map(data, dwtest_one_station)) %>%
+    mutate(test_df = map(dwtest, tidy)) %>%
+    unnest(test_df)
+@
+\noindent provides all the information we need. The first three records, excluding the last two columns, are
+<<echo = FALSE>>=
+options(digits = 3)
+@
+
+<<>>=
+Tmax_DW_no_14 %>% select(-method, -alternative) %>% head(3)
+@
+
+The proportion of $p$-values \emph{below} the 5\% level of significance divided by the number of tests (Bonferroni correction) is
+
+<<>>=
+mean(Tmax_DW_no_14$p.value < 0.05/nrow(Tmax_DW_no_14)) * 100
+@
+
+<<echo=FALSE>>=
+options(digits=1)
+@
+
+\noindent This proportion of \Sexpr{mean(Tmax_DW_no_14$p.value < 0.05/nrow(Tmax_DW_no_14)) * 100}\% is reasonably high and provides evidence that there is considerable temporal autocorrelation in the residuals, as expected.
+
+Finally, we can also compute and visualize the empirical spatio-temporal semi\-vario\-gram of the residuals. Recall that in Lab 2.1 we put the maximum temperature data in the NOAA data set into an \cc{STFDF} object that we labeled \cc{STObj3}. We now load these data and subset the month of July 1993.
+
+<<warning = FALSE>>=
+data("STObj3", package = "STRbook")
+STObj4 <- STObj3[, "1993-07-01::1993-07-31"]
+@
+
+\noindent All we need to do is merge \cc{Tmax\_no\_14}, which contains the residuals, with the \cc{STFDF} object \cc{STObj4}, so that the empirical semivariogram of the residuals can be computed. This can be done quickly, and safely, using the function \fn{left\_join}.
+
+<<results = 'hide', message = FALSE>>=
+STObj4@data <- left_join(STObj4@data, Tmax_no_14)
+@
+
+\noindent As in Lab 2.3, we now compute the empirical semivariogram with the function \fn{variogram}.
+
+<<results = 'hide', message = FALSE>>=
+vv <- variogram(object = residuals ~ 1, # fixed effect component
+                data = STObj4,     # July data
+                width = 80,        # spatial bin (80 km)
+                cutoff = 1000,     # consider pts < 1000 km apart
+                tlags = 0.01:6.01) # 0 days to 6 days
+@
+
+\noindent The command \fn{plot}\cc{(vv)} displays the empirical semivariogram of the residuals\ifstandalone. \else, which is shown in Figure~\ref{fig:var_cov_residuals}. \fi~This empirical semivariogram is clearly different from that of the data \ifstandalone\else (Figure~\ref{fig:var_cov}) \fi and has a lower sill, but it suggests that there is still spatial and temporal correlation in the residuals.
+
+<<echo = FALSE, results ='hide', fig.keep = 'none'>>=
+png("img/Chapter_3/STvar_residuals.png",width=1300,height=1300,res=300);
+plot(vv, main="Empirical semivariogram",
+     xlab="Distance (km)",
+     ylab="Time lag (days)",
+     at = seq(0, 25, length=15))
+dev.off()
+@
+
+\subsection*{Predictions}
+
+Prediction from linear or generalized linear models in \cc{R} is carried out using the function \fn{predict}. As in Lab 3.1, we use the following prediction grid.
+<<>>=
+pred_grid <- expand.grid(lon = seq(-100, -80, length = 20),
+                         lat = seq(32, 46, length = 20),
+                         day = seq(4, 29, length = 6))
+@
+
+\noindent We require all the covariate values at all the prediction locations. Hence, the 12 basis functions need to be evaluated on this grid. As above, we do this by calling \fn{eval\_basis} and converting the result to a matrix, which we then attach to our prediction grid.
+
+<<>>=
+Spred <- eval_basis(basis = G,                      # basis functs
+                s = pred_grid[,c("lon","lat")] %>%  # pred locs
+                     as.matrix()) %>%         # conv. to matrix
+     as.matrix()                              # results as matrix
+colnames(Spred) <- paste0("B", 1:ncol(Spred)) # assign col names
+pred_grid <- cbind(pred_grid, Spred)          # attach to grid
+@
+
+\noindent Now that we have all the covariates in place, we can call \fn{predict}. We supply \fn{predict} with the model \cc{Tmax\_July\_lm}, the prediction grid, and the argument \args{interval}\cc{ = }\strn{"prediction"}, so that \fn{predict} returns the prediction intervals.
+
+<<>>=
+linreg_pred <- predict(Tmax_July_lm,
+                       newdata = pred_grid,
+                       interval = "prediction")
+@
+
+When \fn{predict} is called as above, it returns a matrix containing three columns with names \cc{fit}, \cc{lwr}, and \cc{upr}, which contain the prediction and the lower and upper bounds of the 95\% prediction interval, respectively. Since in this case the prediction interval is the prediction $\pm$ 1.96 times the prediction standard error, we can calculate the prediction standard error from the given interval as follows.
+
+<<>>=
+## Assign prediction and prediction s.e. to the prediction grid
+pred_grid$z_pred <- linreg_pred[,1]
+pred_grid$z_err <- (linreg_pred[,3] - linreg_pred[,2]) / (2*1.96)
+@
+
+\noindent Plotting the prediction and prediction standard error proceeds in a straightforward fashion using {\bf ggplot2}\ifstandalone\else; see Figure~\ref{fig:LinReg_pred}\fi. This is left as an exercise for the reader.
+
+<<echo = FALSE, results ='hide', fig.keep = 'none', message=FALSE>>=
+color_pal <- rev(colorRampPalette(brewer.pal(11, "Spectral"))(16))
+spat_pred_grid <- expand.grid(
+                      lon = seq(-100, -80, length = 20),
+                      lat = seq(32, 46, length = 20)) %>%
+            SpatialPoints(proj4string = CRS("+proj=longlat"))
+gridded(spat_pred_grid) <- TRUE
+temp_pred_grid <- as.Date("1993-07-01") + seq(3, 28, length = 6)
+DE_pred <- STFDF(sp = spat_pred_grid,    # spatial part
+                 time = temp_pred_grid,  # temporal part
+                 data = pred_grid)
+
+color_pal <- rev(colorRampPalette(brewer.pal(11, "Spectral"))(16))
+png("./img/Chapter_3/LinReg_pred.png",width = 1600,height=1000,res=300)
+stplot(DE_pred[,,"z_pred"],
+       main = "Predictions (degrees Fahrenheit)",
+       layout = c(3, 2),
+       col.regions = color_pal,
+       at = seq(70, 105, length=15),
+       colorkey = list(at = seq(70, 105, length=15),
+                       col = color_pal ))
+dev.off()
+
+options(digits = 3)
+png("./img/Chapter_3/LinReg_pred_errs.png",width = 1600,height=1000,res=300)
+stplot(DE_pred[,,"z_err"],
+       main = "Prediction errors (degrees Fahrenheit)",
+       layout = c(3, 2),
+       col.regions = color_pal)
+dev.off()
+@
+
+<<echo = FALSE>>=
+options(digits = 5)
+@
+
+
+<<echo = FALSE, results ='hide', fig.keep = 'none', message = FALSE, warnings = FALSE>>=
+## Plot basis functions
+## Stargaze results
+## 1D Basis functions
+## 2D Basis functions
+
+## Plot basis functions
+library("gridExtra")
+XX <- filter(pred_grid,day==4)
+par(mfrow = c(4,3))
+pl <- list()
+for(i in 1:nbasis(G)) {
+ pl[[i]] <- spread_(select_(XX,"lon","lat",paste0("B",i)),"lon", value = paste0("B",i)) %>% select(-lat) %>% as.matrix() %>% wireframe(xlab="lon", ylab="lat", zlab= bquote(varphi[.(i)]),colorkey=FALSE,drape=TRUE,
+               col.regions = rainbow(100, s = 1, v = 1, start = 0,
+                                     end = max(1,100 - 1)/100, alpha = 1))
+}
+png("./img/Chapter_3/basis_fns.png",width = 2600,height=2000,res=300)
+grid.arrange(pl[[1]], pl[[2]], pl[[3]], pl[[4]],
+             pl[[5]], pl[[6]], pl[[7]], pl[[8]],
+             pl[[9]], pl[[10]], pl[[11]], pl[[12]],
+             ncol = 4,nrow = 3)
+dev.off()
+
+fixnote <- function(print_results) {
+    idx <- which(grepl("Note:", print_results))
+    str <- print_results[idx]
+    str <- gsub(" \\\\\\\\", "", str)
+    str <- gsub("p\\$<\\$0.1", "$p < 0.1$", str)
+    str <- gsub("p\\$<\\$0.05", "$p < 0.05$", str)
+    str <- gsub("p\\$<\\$0.01", "$p < 0.01$", str)
+    print_results[idx] <- str
+    print_results
+}
+
+
+## Stargaze results
+print_results <- stargazer::stargazer(Tmax_July_lm,Tmax_July_gls,
+                                      single.row = TRUE,
+                                      align = TRUE,
+                                      column.sep.width = "-20pt",
+                                      #ci = TRUE,
+                                      dep.var.labels = c("Max. Temperature ($^\\circ$F)"),
+                                      covariate.labels = c("Intercept","Longitude","Latitude","Day",
+                                                           "Longitude $\\times$ Latitude",
+                                                           "Longitude $\\times$ Day",
+                                                           "Latitude $\\times$ Day",
+                                                           paste0("$\\alpha_{",1:12,"}$")),
+                                      order = c(19,1:3,16:18,4:15),
+                                      model.numbers = FALSE,
+                                      model.names = FALSE,
+                                      keep.stat = c("n"),
+                                      column.labels=c("\\qquad\\qquad$\\hat\\beta_{\\textrm{ols}}~(SE(\\hat\\beta_{\\textrm{ols}}))$",
+                                                      "\\qquad\\qquad$\\hat\\beta_{\\textrm{gls}}~(SE(\\hat\\beta_{\\textrm{gls}}))$"))
+print_results <- fixnote(print_results)
+fileConn <- file("linreg_results_table.tex")
+idx <- which(grepl("tabular",print_results))
+writeLines(print_results[idx[1]:idx[2]], fileConn)
+close(fileConn)
+
+print_results2 <- stargazer::stargazer(Tmax_July_lm4[[1]],Tmax_July_lm4[[2]],
+                                       Tmax_July_lm4[[3]],Tmax_July_lm4[[4]],
+                                       Tmax_July_lm4[[5]],
+                                      single.row = TRUE,
+                                      align = TRUE,
+                                      report = "vc*",
+                                      column.sep.width = "-20pt",
+                                      dep.var.labels = c("Max. Temperature ($^\\circ$F)"),
+                                       covariate.labels = c("Intercept","Latitude","Day",
+                                                            "Latitude $\\times$ Day",
+                                                            "Longitude"),
+                                       order = c(5,1,2,4,3),
+                                      keep.stat = c("n","ser"),
+                                      model.numbers = TRUE,
+                                      model.names = FALSE,
+                                      column.labels = c("","","$\\hat\\beta_{\\textrm{ols}}$","",""))
+print_results2_no_df <- print_results2
+for(i in 20:length(print_results2))
+   print_results2_no_df[i] <- gsub("[(][^()]*[)]","",print_results2[i])
+print_results2_no_df <- fixnote(print_results2_no_df)
+fileConn <- file("step_results_table.tex")
+idx <- which(grepl("tabular", print_results2_no_df))
+writeLines(print_results2_no_df[idx[1]:idx[2]], fileConn)
+close(fileConn)
+
+print_results3 <- stargazer::stargazer(Tmax_July_lm4_rss[[1]],Tmax_July_lm4_rss[[2]],
+                                       Tmax_July_lm4_rss[[3]],Tmax_July_lm4_rss[[4]],
+                                       Tmax_July_lm4_rss[[5]],
+                                      single.row = TRUE,
+                                      align = TRUE,
+                                      report = "vc*",
+                                      column.sep.width = "-20pt",
+                                      dep.var.labels = c("Max. Temperature ($^\\circ$F)"),
+                                       covariate.labels = c("Intercept","Latitude",
+                                                            "Longitude $\\times$ Day",
+                                                            "Latitude $\\times$ Day",
+                                                            "$\\alpha_{10}$"),
+                                       order = c(5,1,3,4,2),
+                                      keep.stat = c("n","ser"),
+                                      model.numbers = TRUE,
+                                      model.names = FALSE,
+                                      column.labels = c("","","$\\hat\\beta_{\\textrm{ols}}$","",""))
+print_results3_no_df <- print_results3
+for(i in 20:length(print_results3))
+   print_results3_no_df[i] <- gsub("[(][^()]*[)]","",print_results3[i])
+print_results3_no_df <- fixnote(print_results3_no_df)
+fileConn <- file("step_rss_results_table.tex")
+idx <- which(grepl("tabular", print_results3_no_df))
+writeLines(print_results3_no_df[idx[1]:idx[2]], fileConn)
+close(fileConn)
+
+##1D Examples
+png("./img/Chapter_3/basis_examples.png",width = 3200,height=1400,res=300)
+par(mfrow=c(2,2),mar=c(4,4,2,2))
+set.seed(1)
+s <- seq(0,100,by=0.1)
+c <- seq(0,100,by=5)
+w <- c*0
+PHI <- matrix(0,length(c),length(s))
+for(i in 1:length(c)) {
+  PHI[i,] <- exp(-(s - c[i])^2/12)
+  w[i] <- rnorm(1)
+}
+matplot(s, t(PHI), lty = 2, type='l',
+        xlab = 's', ylab = expression(phi(s)),
+        col = color_pal)
+
+plot(s,PHI[1,],type='l',lty=2,ylim=c(-2.2,2.2),
+     xlab = 's', ylab = expression(Y(s)))
+for(i in 1:length(c)) {
+  lines(s,w[i]*PHI[i,],lty = 2)
+}
+lines(s,colSums(diag(w) %*% PHI),col='red')
+
+
+f <- seq(1:3)/100
+w <- c(f,f)*0
+PHI <- matrix(0,length(f)*2,length(s))
+
+for(i in 1:length(f)) {
+  PHI[i,] <- sin(2*pi*f[i]*s)
+  PHI[i+3,] <- cos(2*pi*f[i]*s)
+  w[i] <- rnorm(1)
+  w[i+3] <- rnorm(1)
+}
+matplot(s, t(PHI), lty = 2, type='l',
+        xlab = 's', ylab = expression(phi(s)),
+        col = 1:12)
+
+plot(s,PHI[1,],type='l',lty=2,ylim=c(-2.8,2.8),
+     xlab = 's', ylab = expression(Y(s)))
+for(i in 1:length(f)) {
+  lines(s,w[i]*PHI[i,],lty = 2)
+  lines(s,w[i+3]*PHI[i+3,],lty = 2)
+}
+lines(s,colSums(diag(w) %*% PHI),col='red')
+dev.off()
+
+##2D Examples
+x <- y <- seq(0, 1, length = 41)
+xy <- expand.grid(x = x,y = y)
+d <- fields::rdist(xy)
+Sigma <- exp(-d/0.2)
+eig <- eigen(Sigma)
+xy2 <- cbind(xy,eig$vectors[,1:9])
+colnames(xy2) = c("x","y",paste0("B",1:9))
+xy_long <- gather(xy2, Basis, val, -x, -y)
+gbasis <- ggplot(xy_long) + geom_tile(aes(x, y, fill=val)) +
+    scale_fill_distiller(palette="Spectral", name = "") +
+    facet_wrap(~ Basis,nrow = 3) + theme_bw() +
+    xlab(expression(s[1])) + ylab(expression(s[2])) +
+    coord_fixed() +
+    scale_x_continuous(breaks = c(0,0.5,1)) +
+    scale_y_continuous(breaks = c(0,0.5,1))
+ggsave(gbasis, file = "./img/Chapter_3/basis2d.png",width=4,height=4,dpi=300)
+
+set.seed(1)
+alpha1 <- rnorm(9)
+alpha2 <- rnorm(9)
+xy3 <- xy %>%
+       mutate(field1 = eig$vectors[,1:9] %*% alpha1 %>% as.numeric(),
+              field2 = eig$vectors[,1:9] %*% alpha2 %>% as.numeric())
+xy_long2 <- gather(xy3, Field, val, -x, -y)
+gfields <- ggplot(xy_long2) + geom_tile(aes(x, y, fill = val)) +
+    scale_fill_distiller(palette="Spectral", name = "") +
+    facet_wrap(~ Field, nrow = 2) + theme_bw() +
+    xlab(expression(s[1])) + ylab(expression(s[2])) +
+    coord_fixed() +
+    scale_x_continuous(breaks = c(0,0.5,1)) +
+    scale_y_continuous(breaks = c(0,0.5,1)) +
+    theme(panel.spacing = unit(3, "lines"))  # facet spacing
+ggsave(gfields, file = "./img/Chapter_3/fields2d.png",width=2.5,height=4,dpi=300)
+
+field_fun <- function(fieldname) {
+    ggplot(filter(xy_long2,Field == fieldname)) +
+    geom_tile(aes(x, y, fill = val)) +
+    scale_fill_distiller(palette="Spectral", name = "") +
+    theme_bw() + coord_fixed() +
+    xlab(expression(s[1])) + ylab(expression(s[2])) +
+    scale_x_continuous(breaks = c(0,0.5,1)) +
+    scale_y_continuous(breaks = c(0,0.5,1))}
+gfield1 <- field_fun("field1")
+gfield2 <- field_fun("field2")
+ggsave(gfield1, file = "./img/Chapter_3/fields2d_1.png",width=2.5,height=2,dpi=300)
+ggsave(gfield2, file = "./img/Chapter_3/fields2d_2.png",width=2.5,height=2,dpi=300)
+@
+
+\end{document}

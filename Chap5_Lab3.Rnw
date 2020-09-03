@@ -1,0 +1,337 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap5_Lab3}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\addcontentsline{toc}{section}{Lab 5.3: Spatio-Temporal Inference with Unknown Evolution Operator}
+\section*{Lab 5.3: Spatio-Temporal Inference with Unknown Evolution Operator}\label{lab:5_unknownEst}
+\markright{LAB 5.3: SPATIO-TEMPORAL INFERENCE WITH UNKNOWN EVOLUTION OPERATOR}
+
+If we have no prior knowledge to guide us on how to parameterize $\bM$, then $\bM$ can be es\-tim\-ated in full in the context of a standard state-space modeling framework. When taking this approach, it is important that a very low-dimensional representation of the spatio-temporal process is adopted -- the dimension of the parameter space increases quadratically with the dimension of the process, and thus the model can easily become over-parameterized.
+
+Empirical orthogonal functions (EOFs) are ideal basis functions to use in this case, since they capture most of the variability in the observed signal, by design. In this Lab we look at the SST data set, take the EOFs that we generated in Lab 2.3, and estimate all unknown parameters, first within a classical time-series framework based on a vector autoregression and using the method of moments (see Appendix \ref{sec:estimationMoM}), and then in a state-space framework using the EM algorithm (see Appendix \ref{sec:estimationLDSTM}).
+
+\subsection*{Time-Series Framework}
+
+The aim of this first part of the Lab is to show how even simple methods can be used in a dynamical setting to provide prediction and prediction standard errors on a variable of interest. These methods work particularly well when we have complete spatial coverage and a high signal-to-noise ratio; this is the case with the SST data.
+
+First, we load the usual packages.
+<<>>=
+library("ggplot2")
+library("STRbook")
+@
+
+\noindent Then we load {\bf expm} for raising matrices to a specified power and {\bf Matrix}, which here we only use for plotting purposes.
+
+<<message = FALSE, warning = FALSE>>=
+library("expm")
+library("Matrix")
+@
+
+\noindent We now load the SST data, but this time we truncate it at April 1997 in order to forecast the SSTs 6 months ahead, in October 1997.
+
+<<>>=
+data("SSTlandmask", package = "STRbook")
+data("SSTlonlat", package = "STRbook")
+data("SSTdata", package = "STRbook")
+delete_rows <- which(SSTlandmask == 1)   # remove land values
+SST_Oct97 <- SSTdata[-delete_rows, 334]  # save Oct 1997 SSTs
+SSTdata <- SSTdata[-delete_rows, 1:328]  # until April 1997
+SSTlonlat$mask <- SSTlandmask            # assign mask to df
+@
+
+Next, we construct the EOFs using only data up to April 1997. The following code follows closely what was done in Lab 2.3, where the entire data set was used.
+
+<<>>=
+Z <- t(SSTdata)                         # data matrix
+spat_mean <- apply(SSTdata, 1, mean)    # spatial mean
+nT <- ncol(SSTdata)                     # no. of time points
+Zspat_detrend <- Z - outer(rep(1, nT),  # detrend data
+                           spat_mean)
+Zt <- 1/sqrt(nT-1)*Zspat_detrend        # normalize
+E <- svd(Zt)                            # SVD
+@
+
+The number of EOFs we use here to model the SST data is $n = 10$. These 10 leading EOFs capture 74\% of the variability in the data.
+
+<<>>=
+n <- 10
+@
+
+\noindent Recall that the object \texttt{E} contains the SVD, that is, the matrices $\bU$ and $\bV$ and the singular values. The dimension-reduced time series of coefficients are given by the EOFs multiplied by the spatially detrended data, that is, $\bfalpha_t = \bfPhi'(\bZ_t - \hat\bfmu),\ t = 1,\dots,T$, where $\hat\bfmu = (1/T)\sum_{t=1}^T\bZ_t$ is the estimated spatial mean.
+
+<<echo=FALSE>>=
+options(digits = 3)
+@
+
+<<>>=
+TS <- Zspat_detrend %*% E$v[, 1:n]
+summary(colMeans(TS))
+@
+
+\noindent In the last line above, we have verified that the time series have mean zero, which is needed to compute covariances by taking outer products. Next, we estimate the matrices $\bM$ and $\bC_\eta$ using the method of moments. First we create two sets of time series that are shifted by $\tau$ time points with respect to each other; in this case we let $\tau = 6,$ so that we analyze dynamics on a six-month scale. The $i$th column in \cc{TStplustau} below corresponds to the time series at the $(i+6)$th time point, while that in \cc{TSt} corresponds to the time series at $i$th time point.
+
+<<>>=
+tau <- 6
+nT <- nrow(TS)
+TStplustau <- TS[-(1:tau), ] # TS with first tau time pts removed
+TSt <- TS[-((nT-5):nT), ]    # TS with last tau time pts removed
+@
+
+\noindent The lag-0 empirical covariance matrix and the lag-$\tau$ empirical cross-covariance matrices are now computed by taking their matrix cross-product and dividing by the appropriate number of time points; see \eqref{eq:emp_cov}.
+
+<<>>=
+Cov0 <- crossprod(TS)/nT
+Covtau <- crossprod(TStplustau,TSt)/(nT - tau)
+@
+
+\noindent The estimates for $\bM$ and $\bC_\eta$ can now be estimated from these empirical covariance matrices.  As discussed in Appendix \ref{sec:estimationMoM}, this can be done using the following code.
+
+<<>>=
+C0inv <- solve(Cov0)
+Mest <- Covtau %*% C0inv
+Ceta <- Cov0 - Covtau %*% C0inv %*% t(Covtau)
+@
+\noindent There are more efficient ways to compute the quantities above that ensure symmetry and positive-definiteness of the results. In particular, the inverse rarely needs to be found explicitly. For further information, the interested reader is referred to standard books on linear algebra \citep[see, for example,][]{schott2016matrix}\index[aut]{Schott, J.~R.}.
+
+The matrices can be visualized using the function \fn{image}.
+
+<<eval = FALSE>>=
+image(Mest)
+image(Ceta)
+@
+
+\noindent From visual inspection, the estimate of the propagator matrix, \cc{Mest}, is by no means diagonally dominant, implying that there is benefit in assuming interactions between the EOFs across time steps (see Section \ref{sec:ProcRed}). Further, the estimated variances along the diagonal of the covariance matrix of the additive disturbance in the IDE model, $\bC_\eta$, decrease with the EOF index; this is expected as EOFs with higher indices tend to have higher-frequency components.
+
+Forecasting using this EOF-reduced model is straightforward as we take the coefficients at the final time point, $\bfalpha_t$, propagate those forward, and re-project onto the original space. For example,  $\hat\bfmu + \bfPhi\bM^2\bfalpha_t$ gives a one-year forecast. Matrix powers (which represent multiple matrix multiplications and do not come from elementwise multiplications) can be implemented using the operator \cc{\%\^{}\%} from the package {\bf expm}; this will be used when we implement the state-space model below. Here we consider six-month-ahead forecasts; in the code below we project ahead the EOF coefficients of the time series at the 328th time point (which corresponds to April 1997) six months into the future.
+
+<<>>=
+SSTlonlat$pred <- NA
+alpha_forecast <- Mest %*% TS[328, ]
+@
+
+\noindent The projection onto the original space is done by pre-multiplying by the EOFs and adding back the estimated spatial mean (see Section \ref{sec:estimationMoM}).
+
+<<>>=
+idx <- which(SSTlonlat$mask == 0)
+SSTlonlat$curr[idx]  <- as.numeric(E$v[, 1:n] %*% TS[328, ] +
+                                       spat_mean)
+SSTlonlat$pred[idx]  <- as.numeric(E$v[, 1:n] %*% alpha_forecast +
+                                       spat_mean)
+@
+
+\noindent Now we add the data to the data frame for plotting purposes.
+
+<<>>=
+SSTlonlat$obs1[idx]  <- SSTdata[, 328]
+SSTlonlat$obs2[idx]  <- SST_Oct97
+@
+
+The six-month-ahead prediction variances can also be computed (see Appendix \ref{sec:estimationMoM}).
+
+<<>>=
+C <- Mest %*% Cov0 %*% t(Mest) + Ceta
+@
+\noindent The prediction variances are found by projecting the covariance matrix \cc{C} onto the original space and extracting the diagonal elements. The prediction standard errors are the square root of the prediction variances and hence obtained as follows.
+
+<<>>=
+SSTlonlat$predse[idx] <-
+    sqrt(diag(E$v[, 1:n] %*% C %*% t(E$v[, 1:n])))
+@
+
+Plotting proceeds in a straightforward fashion using {\bf ggplot2}. In Figure~\ref{fig:SST_MoM} we show the April 1997 data and the EOF projection for that month, as well as the October 1997 data and the forecast for that month. From visual inspection, the El Ni{\~n}o pattern of high SSTs is captured but the predicted anomaly is too low. This result is qualitatively similar  to what we obtained in Lab 3.3 using linear regression models.
+
+ \begin{figure}[t!]
+\begin{center}
+\includegraphics[width=0.49\textwidth]{img/Chapter_5/SST_obs_curr.png}
+\includegraphics[width=0.49\textwidth]{img/Chapter_5/SST_obs_fut.png}
+\includegraphics[width=0.49\textwidth]{img/Chapter_5/SST_curr.png}
+\includegraphics[width=0.49\textwidth]{img/Chapter_5/SST_pred.png}
+\includegraphics[width=0.49\textwidth]{img/Chapter_5/SST_predse.png}
+	\caption{Top: SST data for April 1997 (left) and October 1997 (right). Middle: the EOF projection for April 1997 (left), and the forecast for October 1997 (right). Note the different color scales for the predictions (up to 1$^\circ$C) and for the observations (up to 5$^\circ$C). Bottom: Prediction standard errors for the forecast. \label{fig:SST_MoM}}
+	\end{center}
+\end{figure}
+
+
+
+<<echo  = FALSE, fig.keep = 'none', results = 'hide', warning=FALSE, message=FALSE>>=
+g1 <- ggplot(SSTlonlat) +
+    geom_tile(aes(lon,lat,fill=curr)) +
+    scale_fill_distiller(palette = "Spectral", limits = c(-2,2), name = "degC") +
+    theme_bw() + coord_fixed()
+
+g2 <- ggplot(SSTlonlat) +
+    geom_tile(aes(lon,lat,fill=pred)) +
+    scale_fill_distiller(palette = "Spectral", limits = c(-1.2,1.2), name = "degC") +
+    theme_bw() + coord_fixed()
+
+
+g3 <- ggplot(SSTlonlat) +
+        geom_tile(aes(lon,lat,fill=obs1)) +
+    scale_fill_distiller(palette = "Spectral", limits = c(-2,2), name = "degC") +
+    theme_bw() + coord_fixed()
+
+g4 <- ggplot(SSTlonlat) +
+    geom_tile(aes(lon,lat,fill=obs2)) +
+    scale_fill_distiller(palette = "Spectral",name = "degC") +
+    theme_bw() + coord_fixed()
+
+
+g5 <- ggplot(SSTlonlat) +
+    geom_tile(aes(lon,lat,fill=predse)) +
+    scale_fill_distiller(palette = "Spectral",name = "degC") +
+    theme_bw() + coord_fixed()
+
+ggsave(g1, file = "./img/Chapter_5/SST_curr.png", dpi = 300, width = 5, height = 1.8)
+ggsave(g2, file = "./img/Chapter_5/SST_pred.png", dpi = 300, width = 5, height = 1.8)
+ggsave(g3, file = "./img/Chapter_5/SST_obs_curr.png", dpi = 300, width = 5, height = 1.8)
+ggsave(g4, file = "./img/Chapter_5/SST_obs_fut.png", dpi = 300, width = 5, height = 1.8)
+ggsave(g5, file = "./img/Chapter_5/SST_predse.png", dpi = 300, width = 5, height = 1.8)
+@
+
+\subsection*{State-Space Framework}
+
+The function \fn{DSTM\_EM}, provided with the package {\bf STRbook}, runs the EM algorithm that carries out maximum likelihood estimation in a state-space model. The function takes the data \args{Z}, the initial covariance $\bC_0$ in \args{Cov0}, the initial state $\bfmu_0$ in \args{muinit}, the evolution operator $\bM$ in \args{M}, the covariance matrix $\bC_\eta$ in \args{Ceta}, the measurement-error variance $\sigma^2_\epsilon$ in \args{sigma2\_eps}, the matrix $\bH$ in \args{H}, the maximum number of EM iterations in \args{itermax}, and the tolerance in \args{tol} (the tolerance is the smallest change in the log-likelihood, multiplied by $2$, required across two consecutive iterations of the EM algorithm, before terminating). All parameters supplied to the function need to be initial guesses (usually those from the method of moments suffice); these will be updated using the EM algorithm.
+
+<<eval = FALSE>>=
+DSTM_Results <- DSTM_EM(Z = SSTdata,
+                        Cov0 = Cov0,
+                        muinit = matrix(0, n, 1),
+                        M = Mest,
+                        Ceta = Ceta,
+                        sigma2_eps = 0.1,
+                        H = H <- E$v[, 1:n],
+                        itermax = 10,
+                        tol = 1)
+@
+
+<<echo = FALSE, eval = FALSE>>=
+save(DSTM_Results, file = "STRbook/data/DSTM_EM_results.rda")
+@
+
+<<echo = FALSE>>=
+load(file = "STRbook/data/DSTM_EM_results.rda")
+@
+
+
+The returned object \cc{DSTM\_Results} contains the estimated parameters, the smoothed states and their covariances, and the complete-data negative log-likelihood. In this case, estimates of $\{\bfalpha_t\}$ using the state-space framework are practically identical to those obtained using the time-series framework presented in the first part of the Lab. We plot estimates of $\alpha_{1,t}$, $\alpha_{2,t}$, and $\alpha_{3,t}$ below for the two methods; see Figure~\ref{fig:alpha_compare}.
+
+<<eval = FALSE>>=
+par(mfrow = c(1,3))
+for(i in 1:3) {
+  plot(DSTM_Results$alpha_smooth[i, ], type = 'l',
+       xlab = "t", ylab = bquote(alpha[.(i)]))
+  lines(TS[, i], lty = 'dashed', col = 'red')
+}
+@
+
+<<echo = FALSE, fig.keep = 'none', results = 'hide'>>=
+png("img/Chapter_5/alpha_compare.png", width = 2400, height = 800, res = 300)
+par(mfrow = c(1,3))
+for(i in 1:3) {
+  plot(DSTM_Results$alpha_smooth[i,], type = 'l',
+       xlab = "t", ylab = bquote(alpha[.(i)]))
+  lines(TS[,i], lty = 'dashed', col = 'red')
+}
+dev.off()
+@
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=\textwidth]{img/Chapter_5/alpha_compare.png}
+	\caption{Estimates of $\alpha_{1,t}$ (left), $\alpha_{2,t}$ (center), and $\alpha_{3,t}$ (right) using the method of moments (red dashed line) and the EM algorithm (black solid line). \label{fig:alpha_compare}}
+	\end{center}
+\end{figure}
+
+Let us turn now to inference on the parameters. From Appendix \ref{sec:EM} note that the EM algorithm utilizes a Kalman filter that processes the data one time period (e.g., month) at a time. (Recall that with the method of moments we let $\tau = 6$ months, so we estimated directly the state transitions over six months.) Therefore, inferences on the parameters and their interpretations differ considerably. For example, the left and right panels of Figure \ref{fig:M_compare} show the estimates of the evolution matrix for the two methods. At first sight, it appears that the matrix estimated using the EM algorithm is indicating a random-walk behavior. However, if we multiply the matrix $\bM$ by itself six times (which then describes the evolution over six months), we obtain something that is relatively similar to what was estimated using the method of moments using a time lag of $\tau = 6$ months.
+
+To make the plots in Figure~\ref{fig:M_compare}, we first cast the matrices into objects of class \cc{Matrix}. Note that using the function \fn{image} on objects of class \cc{matrix} generates similar plots that are, however, less informative. On the other hand, plots of {\bf Matrix} objects are done using the function \fn{levelplot} in the {\bf lattice} package.
+
+<<eval = FALSE>>=
+image(as(DSTM_Results$Mest, "Matrix"))
+image(as(DSTM_Results$Mest %^% 6, "Matrix"))
+image(as(Mest, "Matrix"))
+@
+
+<<echo = FALSE, fig.keep = "FALSE", results = 'hide'>>=
+png("img/Chapter_5/M_EM.png", width = 1300, height = 1000, res = 300)
+image(as(DSTM_Results$Mest, "Matrix"))
+dev.off()
+
+png("img/Chapter_5/M_EM6.png", width = 1300, height = 1000, res = 300)
+image(as(DSTM_Results$Mest %^% 6, "Matrix"))
+dev.off()
+
+
+png("img/Chapter_5/M_MoM.png", width = 1300, height = 1000, res = 300)
+image(as(Mest, "Matrix"))
+dev.off()
+
+@
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=0.32\textwidth]{img/Chapter_5/M_EM.png}
+\includegraphics[width=0.32\textwidth]{img/Chapter_5/M_EM6.png}
+\includegraphics[width=0.32\textwidth]{img/Chapter_5/M_MoM.png}
+	\caption{Estimate of a one-step-ahead evolution operator using the EM algorithm (left); EM estimate raised to the sixth power (center); and estimate of the six-steps-ahead evolution operator using the method of moments (right). \label{fig:M_compare}}
+	\end{center}
+\end{figure}
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=0.99\textwidth]{img/Chapter_5/EM_Mom_Forecasts.png}
+	\caption{Forecasts (left) and prediction standard  errors (right) for the EOF coefficients in October 1997 using a lag-6 time-series model estimated using the method of moments (black) and a lag-1 state-space model estimated using the EM algorithm (red). \label{fig:EM_Mom_Forecasts}}
+	\end{center}
+\end{figure}
+
+Forecasting proceeds the same way as in the method of moments. Specifically, we take the last smoothed time point (which corresponds to April 1997) and use the EM-estimated one-month propagator matrix to forecast the SSTs six months ahead. This is implemented easily using a \cc{for} loop.
+
+<<>>=
+alpha <- DSTM_Results$alpha_smooth[, nT]
+P <- DSTM_Results$Cov0
+for(t in 1:6) {
+   alpha <- DSTM_Results$Mest %*% alpha
+   P <- DSTM_Results$Mest %*% P %*% t(DSTM_Results$Mest) +
+       DSTM_Results$Ceta
+}
+@
+
+It is instructive to compare the predictions and the prediction standard errors of the forecasted EOF coefficients using the two models; see Figure~\ref{fig:EM_Mom_Forecasts}. While the prediction standard errors for the state-space model are slightly lower (which is expected since a measurement-error component of variability has been filtered out), it is remarkable that forecasts from the lag-6 time-series model are quite similar to those of the lag-1 state-space model. These two models and their respective inferences can be expected to differ when there is more nonlinearity in the process and/or the data are less complete in space and time.
+
+\ifstandalone \else In our concluding remarks, we remind the reader that in this Lab we considered a \emph{linear} DSTM for modeling SSTs. Recent research has suggested that \emph{nonlinear} DSTMs may provide superior prediction performance; see the case study in Appendix~\ref{sec:QESNapp}.  \fi
+
+<<eval = FALSE, echo = FALSE>>=
+plot(alpha_forecast, xlab = "i",
+     ylab = expression(hat(alpha[i])), type = 'l')
+lines(alpha, col = 'red')
+plot(sqrt(diag(C)), xlab = "i",
+     ylab = expression(s.e.(hat(alpha[i]))), type = 'l')
+lines(sqrt(diag(P)), col = 'red')
+@
+
+<<eval = TRUE, echo = FALSE>>=
+png(filename = "./img/Chapter_5/EM_Mom_Forecasts.png", width = 2500, height = 1200, res = 300)
+par(mfrow = c(1,2))
+par(mar = c(5.1, 4.5, 4.1, 2.1))
+plot(alpha_forecast, xlab = "i", ylab = expression(hat(alpha[i])),
+     ylim = c(-19, 3.5), type = 'l')
+lines(alpha, col = 'red')
+plot(sqrt(diag(C)), xlab = "i", ylab = expression(s.e.(hat(alpha[i]))), type = 'l')
+lines(sqrt(diag(P)), col = 'red')
+dev.off()
+@
+
+\ifstandalone
+\bibliography{LitReviewBib,LitReviewR}
+\fi
+\end{document}

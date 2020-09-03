@@ -1,0 +1,506 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap5_Lab2}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\ifstandalone
+
+\section*{Lab 5.2: Spatio-temporal inference using the IDE model}
+
+\else
+
+\addcontentsline{toc}{section}{Lab 5.2: Spatio-Temporal Inference using the IDE Model}
+\section*{Lab 5.2: Spatio-Temporal Inference using the IDE Model}\label{lab:5_IDEimpl}
+\markright{LAB 5.2: SPATIO-TEMPORAL INFERENCE USING THE IDE}
+
+\fi
+
+In this Lab we use the package {\bf IDE} to fit spatio-temporal IDE models as well as predict and forecast from spatio-temporal data. We explore three cases. The first two cases consider simulated data where the true model is known, and the third considers \ifstandalone a radar data set. \else the Sydney radar data set described in Chapter 2.\fi
+
+For this Lab, we need the package {\bf IDE} and also the package {\bf FRK}, which will be used to construct basis functions to model the spatially varying parameters of the kernel. In addition, we shall use the package {\bf plyr} for binding data frames with unequal column number later on in the Lab.
+
+<<warning = FALSE, message = FALSE>>=
+library("plyr")
+library("dplyr")
+library("IDE")
+library("FRK")
+library("ggplot2")
+library("sp")
+library("spacetime")
+library("STRbook")
+@
+
+<<echo = FALSE, message=FALSE, warning=FALSE>>=
+library("ggplot2")
+library("gridExtra")
+@
+
+\ifstandalone
+
+The first-order spatio-temporal IDE process model used in the package {\bf IDE} is given by
+\begin{equation}
+Y_t(\bs) = \int_{D_s} m(\bs,\bx;\bftheta_p) Y_{t-1}(\bx) \; \intd \bx  + \eta_t(\bs),\quad \bs \in D_s,
+\label{eq:linearIDE}
+\end{equation}
+for $t=1,2,\ldots,$ where $m(\bs,\bx;\bftheta_p)$ is a {\it transition kernel}, depending on parameters $\bftheta_p$ that specify ``redistribution weights'' for the process at the previous time over the spatial domain, $D_s$, and $\eta_t(\bs)$ is a time-varying (but statistically independent in time) continuous mean-zero Gaussian spatial process. Note that we assume here, as one often does, that the parameter vector $\bftheta_p$ does not vary with time, but it could do so in general. So, the process at location $\bs$ and time $t$ is given by the weighted average (integral) of the process throughout the domain at the past time, where the weights are given by the transition kernel, $m(\cdot)$.  The ``adjustment,'' given by $\eta_t(\bs)$, is assumed to be Gaussian and accounts for spatial dependencies in $Y_t(\cdot)$ that are not captured by this weighted average. Another way to think about $\eta_t(\cdot)$ is that it adds smaller-scale dependence that is removed in the inherent smoothing that occurs when $\{Y_{t-1}(\cdot)\}$ is averaged over space, in order to give $Y_t(\cdot)$ a realistic spatial dependence structure. In general, $\int_{D_s} m(\bs,\bx;\bftheta_p) \intd \bx < 1$ for the process to be stable (non-explosive) in time.
+
+\else
+
+\fi
+
+The kernel $m(\bs,\bx;\bftheta_p)$ used by the package {\bf IDE} is given by
+
+\begin{equation}
+m(\bs,\bx;\bftheta_p) = {\theta_{p,1}(\bs)} \exp\left(-\frac{1}{\theta_{p,2}(\bs)}\left[(x_1 - \theta_{p,3}(\bs) - s_1)^2 + (x_2 - \theta_{p,4}(\bs) - s_2)^2 \right] \right),
+\label{eq:linearIDEm_kernel}
+\end{equation}
+
+\ifstandalone
+
+\noindent where the spatially varying kernel amplitude is given by $\theta_{p,1}(\bs)$ and controls the temporal stationarity, the spatially varying length-scale (variance) parameter $\theta_{p,2}(\bs)$ corresponds to a kernel scale (aperture or width) parameter (i.e., the kernel width increases as $\theta_{p,2}$ increases), and the mean (shift) parameters $\theta_{p,3}(\bs)$ and $\theta_{p,4}(\bs)$ correspond to a spatially varying shift of the kernel relative to location $\bs$. Spatially invariant kernels (i.e., where the elements of $\bftheta_p$ are not functions of space) are also allowed.
+
+\else
+
+\noindent where $\theta_{p,1}(\bs)$ is the spatially varying amplitude, $\theta_{p,2}(\bs)$ is the spatially varying kernel aperture (or width), and the mean (shift) parameters $\theta_{p,3}(\bs)$ and $\theta_{p,4}(\bs)$ correspond to a spatially varying shift of the kernel relative to location $\bs$. Spatially invariant kernels (i.e., where the elements of $\bftheta_p$ are not functions of space) are also allowed.
+
+\fi
+
+The package {\bf IDE} uses a bisquare spatial-basis-function decomposition for both the process $Y_t(\cdot)$ and the spatial process $\eta_t(\cdot)$, $t = 1,2,\dots.$ The covariance matrix of the basis-function coefficients associated with $\eta_t(\cdot)$ is assumed to be proportional to the identity matrix, where the constant of proportionality is estimated. In {\bf IDE}, the latent process $\widetilde{Y}_t(\bs)$ is the IDE dynamical process superimposed on some fixed effects, which can be expressed as a linear combination of known covariates $\bx_t(\bs)$,
+\begin{equation}\label{eq:YtildeLab}
+\widetilde{Y_t}(\bs) = \bx_t(\bs)'\bfbeta + Y_t(\bs);\quad \bs \in D_s,
+\end{equation}
+for $t = 1,2,\dots$, where $\bfbeta$ are regression coefficients. The data vector $\bZ_t \equiv (Z_t(\br_{1t}),\dots,Z_t(\br_{m_tt}))'$ is then the latent process\index{latent process} observed with noise,
+$$
+Z_t(\br_{jt}) = \widetilde{Y}_t(\br_{jt}) + \epsilon_t(\br_{jt}),\quad j = 1,\dots,m_t,
+$$
+for $t = 1,2,\dots$, where $\epsilon_t(\br_{jt}) \sim iid\,Gau(0, \sigma^2_\epsilon)$.
+
+\subsection*{Simulation Example with a Spatially Invariant Kernel}
+
+The package {\bf IDE} contains a function \fn{simIDE} that simulates the behavior of a typical dynamic system governed by linear transport. The function can simulate from a user-defined IDE model, or from a pre-defined one. In the latter case, the number of time points to simulate (\args{T}), the number of (spatially fixed) observations to use  (\args{nobs}), and a flag indicating whether to use a spatially invariant kernel (\args{k\_spat\_invariant}\cc{ = }\num{1}) or not (\args{k\_spat\_invariant}\cc{ = }\num{0}), need to be provided. The pre-defined model includes a linear trend in $s_1$ and $s_2$.
+
+<<message=FALSE>>=
+SIM1 <- simIDE(T = 10, nobs = 100, k_spat_invariant = 1)
+@
+
+\noindent The returned list \cc{SIM1} contains the simulated process in the data frame \cc{s\_df}, the observed data in the data frame \cc{z\_df}, and the observed data as an \cc{STIDF} object \cc{z\_STIDF}. It also contains two {\bf ggplot2} plots, \cc{g\_truth} and \cc{g\_obs}, which can be readily plotted as follows.
+
+<<results = 'hide', fig.keep = 'none'>>=
+print(SIM1$g_truth)
+print(SIM1$g_obs)
+@
+
+\noindent While the action of the transport is clearly noticeable in the evolution of the process, there is also a clear spatial trend. Covariates are included through the use of a standard \cc{R} formula when calling the function \fn{IDE}. Additional arguments to \fn{IDE} include the data set, which needs to be of class \cc{STIDF}, the temporal discretization to use (we will use 1 day) of class \cc{difftime}, and the resolution of the grid upon which the integrations (as well as predictions) will be carried out. Other arguments include user-specified basis functions for the process and what transition kernel will be used, which for now we do not specify. By default, the IDE model will decompose the process using two resolutions of bisquare basis functions and will assume a spatially invariant Gaussian transition kernel.
+
+<<message = FALSE>>=
+IDEmodel <- IDE(f = z ~ s1 + s2,
+                data = SIM1$z_STIDF,
+                dt = as.difftime(1, units = "days"),
+                grid_size = 41)
+@
+
+The returned object \cc{IDEmodel} is of class \cc{IDE} and contains initial parameter es\-tim\-ates, as well as predictions of $\bfalpha_t,$ for $t = 1,\dots,T$, at these initial parameter estimates. The parameters in this case are the measurement-error variance, the variance of the random disturbance $\eta_t(\cdot)$ (whose covariance structure is fixed), the kernel parameters, and the regression coefficients $\bfbeta$.
+
+Estimating the parameters in the IDE model using maximum likelihood is a computationally intensive procedure. The default method currently implemented uses a differential evolution optimization algorithm from the package {\bf DEoptim}, which is a global optimization algorithm that can be easily parallelized. Fitting takes only a few minutes on a 60-core high-performance computer, but can take an hour or two on a standard desktop computer. Fitting can be done by running the following code.
+
+<<eval = FALSE>>=
+fit_results_sim1 <- fit.IDE(IDEmodel,
+                           parallelType = 1)
+@
+
+\noindent Here \args{parallelType}\cc{ = }\num{1} ensures that all available cores on the computer are used for fitting. Alternatively, the results can be loaded from cache using the following command.
+
+
+<<echo = FALSE, eval = FALSE>>=
+save(fit_results_sim1, file = "STRbook/data/IDE_Sim1_results.rda")
+@
+
+
+<<>>=
+data("IDE_Sim1_results", package = "STRbook")
+@
+
+The list \cc{fit\_results\_sim1} contains two fields: \cc{optim\_results} that contains the output of the optimization algorithm, and \cc{IDEmodel} that contains the fitted IDE model. The fitted kernel can be visualized by using the function \fn{show\_kernel}.
+
+<<results = 'hide', fig.keep = 'none'>>=
+show_kernel(fit_results_sim1$IDEmodel)
+@
+
+\noindent Note how the fitted kernel is shifted to the left and upwards, correctly representing the southeasterly transport evident in the data. The estimated kernel parameters $\bftheta_p$ are given below.
+
+<<>>=
+fit_results_sim1$IDEmodel$get("k") %>% unlist()
+@
+\noindent These estimates compare well to the true values \cc{c(}\num{150}, \num{0.002}, \num{-0.1}, \num{0.1}\cc{)} (see the help file for \fn{simIDE}). The estimated regression coefficients are given below.
+
+<<>>=
+coef(fit_results_sim1$IDEmodel)
+@
+
+\noindent These also compare well to the true values \cc{c(}\num{0.2}, \num{0.2}, \num{0.2}\c{)}. Also of interest are the moduli of the possibly complex eigenvalues of the evolution matrix $\bM$. These can be extracted as follows.
+
+<<>>=
+abs_ev <- eigen(fit_results_sim1$IDEmodel$get("M"))$values %>%
+          abs()
+summary(abs_ev)
+@
+
+\noindent Since the largest of these is less than 1, the IDE exhibits stable behavior.
+
+For prediction, one may either specify a prediction grid or use the default one used for approximating the integrations set up by \fn{IDE}. The latter is usually sufficient, so we use this without exception for the examples we consider. %In the former, one should specify an \cc{STFDF}, for example as follows.
+When a prediction grid is not supplied, the function \fn{predict} returns a data frame with predictions spanning the temporal extent of the data (forecasts and hindcasts are explored later).
+
+<<>>=
+ST_grid_df <- predict(fit_results_sim1$IDEmodel)
+@
+
+The prediction map and prediction-standard-error map can now be plotted using stand\-ard {\bf ggplot2} commands as follows.
+
+<<results = 'hide', fig.keep = 'none'>>=
+gpred <- ggplot(ST_grid_df) +       # Plot the predictions
+  geom_tile(aes(s1, s2, fill=Ypred)) +
+  facet_wrap(~t) +
+  fill_scale(name = "Ypred", limits = c(-0.1, 1.4)) +
+  coord_fixed(xlim=c(0, 1), ylim = c(0, 1))
+
+gpredse <- ggplot(ST_grid_df) +     # Plot the prediction s.es
+  geom_tile(aes(s1, s2, fill = Ypredse)) +
+  facet_wrap(~t) +
+  fill_scale(name = "Ypredse") +
+  coord_fixed(xlim=c(0, 1), ylim = c(0, 1))
+@
+
+\noindent In Figure~\ref{fig:IDEsimresults}, we show the observations, the true process, the predictions, and the prediction standard errors from the fitted model. Notice that the prediction standard errors are large in regions of sparse observations, as expected.
+
+<<echo = FALSE, fig.keep = 'none', results = 'hide', message = FALSE>>=
+library("gridExtra")
+g <- grid.arrange(SIM1$g_truth + scale_x_continuous(breaks = c(0,0.5)) +
+                            scale_fill_distiller(palette = "Spectral", limits = c(0.1,1.4)),
+                  SIM1$g_obs + scale_x_continuous(breaks = c(0,0.5)) +
+                            scale_fill_distiller(palette = "Spectral", limits = c(0.1,1.4)),
+                  gpred + scale_x_continuous(breaks = c(0,0.5)) +
+                            scale_fill_distiller(palette = "Spectral", limits = c(0.1,1.4)),
+                  gpredse + scale_x_continuous(breaks = c(0,0.5)) ,
+                  nrow = 2)
+ggsave(g, file = "./img/Chapter_5/IDEsimresults.png", width = 12, height = 10, dpi = 300)
+@
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=\linewidth,angle=0]{img/Chapter_5/IDEsimresults.png}
+\end{center}
+\caption{Simulated process (top left), simulated data (top right), predictions following the fitting of the IDE model (bottom left) and the respective prediction standard errors (bottom right).}
+\label{fig:IDEsimresults}
+\end{figure}
+
+<<echo= FALSE, eval = FALSE>>=
+s1_pred <- s2_pred <- seq(0,1,length.out = 71)
+st_grid <- expand.grid(s1 = s1_pred,
+                      s2 = s2_pred,
+                      date = unique(time(SIM1$z_STIDF)))
+pred_grid <- STIDF(sp = SpatialPoints(st_grid[,c("s1","s2")]),
+                 time = st_grid$date,
+                 data = st_grid %>% select(-s1, -s2, -date))
+
+## Predict using prior guesses
+ST_grid_df <- predict(fit_results_sim1$IDEmodel,
+                      newdata = pred_grid) %>%
+              as.data.frame()
+@
+
+\subsection*{Simulation Example with a Spatially Varying Kernel}
+
+In the previous example we considered the case of a spatially invariant kernel, that is, the case when the kernel $m(\bs,\bx;\bftheta_p)$ is just a function of $\bx - \bs$. In this example, we consider the case when one or more of the $\bftheta_p$ are allowed to be spatially referenced. Such models are needed when the spatio-temporal process exhibits, for example, considerable spatially varying drift (i.e., advection). Such a process can be simulated using the function \fn{simIDE} by specifying \args{k\_spat\_invariant}\cc{ = }\num{0}. To model data from a process of this sort, we need to have a large \args{nobs} and many time points; we set \args{T}\cc{ = }\num{15}. This is important, as it is difficult to obtain reasonable estimates of spatially distributed parameters unless the data cover a large part of the spatial domain for a sustained amount of time.
+
+<<>>=
+SIM2 <- simIDE(T = 15, nobs = 1000, k_spat_invariant = 0)
+@
+
+As above, the process and the observed data can be plotted as two {\bf ggplot2} plots.
+
+<<results = 'hide', fig.keep = 'none'>>=
+print(SIM2$g_truth)
+print(SIM2$g_obs)
+@
+
+\noindent Note how the process appears to rotate quickly counter-clockwise and come to a nearly complete standstill towards the lower part of the domain. The spatially varying advection that generated this field can be visualized using the following command.
+
+<<eval = FALSE>>=
+show_kernel(SIM2$IDEmodel, scale = 0.2)
+@
+
+\noindent In this command, the argument \args{scale} is used to scale the arrow sizes by 0.2; that is, the shift per time point is five times the displacement indicated by the arrow.
+
+Spatially varying kernels can be introduced by specifying the argument \args{kernel\_basis} inside the call to {\bf IDE}. The basis functions that {\bf IDE} uses are of the same class as those used by {\bf FRK}. We construct nine bisquare basis functions below that are equally spaced in the domain.
+
+<<>>=
+mbasis_1 <- auto_basis(manifold = plane(),   # fns on the plane
+                       data = SIM2$z_STIDF,  # data
+                       nres = 1,             # 1 resolution
+                       type = 'bisquare')    # type of functions
+@
+
+\noindent To plot these basis functions, type \fn{show\_basis}\cc{(mbasis\_1)}.
+
+Now, recall that $\theta_{p,1}$ (identified as \cc{thetam1} in {\bf IDE}) corresponds to the amplitude of the kernel, $\theta_{p,2}$ (\cc{thetam2}) to the scale (width) or aperture, $\theta_{p,3}$ (\cc{thetam3}) to the horizontal drift, and $\theta_{p,4}$ (\cc{thetam4}) to the vertical drift. In what follows, suppose that $\theta_{p,1}$ and $\theta_{p,2}$ are spatially invariant (usually a reasonable assumption), and decompose $\theta_{p,3}$ and $\theta_{p,4}$ as sums of basis functions given in \cc{mbasis\_1}.
+
+<<>>=
+kernel_basis <- list(thetam1 = constant_basis(),
+                     thetam2 = constant_basis(),
+                     thetam3 = mbasis_1,
+                     thetam4 = mbasis_1)
+@
+
+Modeling proceeds as before, except that now we specify the argument \args{kernel\_basis} when calling \fn{IDE}.
+
+<<>>=
+IDEmodel <- IDE(f = z ~ s1 + s2 + 1,
+                data = SIM2$z_STIDF,
+                dt = as.difftime(1, units = "days"),
+                grid_size = 41,
+                kernel_basis = kernel_basis)
+@
+
+\noindent Fitting also proceeds by calling the function \fn{fit.IDE}. We use the argument \args{itermax}\cc{ = }\num{400} below to specify the maximum number of iterations for the optimization routine to use.
+
+<<eval = FALSE>>=
+fit_results_sim2 <- fit.IDE(IDEmodel,
+                           parallelType = 1,
+                           itermax = 400)
+@
+
+\noindent  As above, since this is computationally intensive, we provide cached results that can be loaded using the following command.
+
+<<echo = FALSE, eval = FALSE>>=
+save(fit_results_sim2, file = "STRbook/data/IDE_Sim2_results.rda")
+@
+
+<<>>=
+data("IDE_Sim2_results", package = "STRbook")
+@
+
+The fitted spatially varying kernel can be visualized using the following command.
+<<eval = FALSE>>=
+show_kernel(fit_results_sim2$IDEmodel)
+@
+\noindent The true and fitted spatially varying drift parameters are shown side by side in Figure~\ref{fig:Sim2kernels}. Note how the fitted drifts capture the broad directions and magnitudes of the true underlying process. Predictions and prediction standard errors can be obtained and mapped using \fn{predict} as above. This is left as an exercise for the reader.
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=\linewidth,angle=0]{img/Chapter_5/kernels_sim2.png}
+\end{center}
+\caption{True drifts (left) and estimated drifts (right). \label{fig:Sim2kernels}}
+\end{figure}
+
+
+<<echo = FALSE, fig.keep = 'none', results = 'hide'>>=
+K1 <- show_kernel(fit_results_sim2$IDEmodel, scale = 0.2) + ggplot2::coord_fixed()
+K2 <- show_kernel(SIM2$IDEmodel, scale = 0.2) + ggplot2::coord_fixed()
+g <- grid.arrange(K1, K2, ncol = 2)
+ggsave(g, file = "./img/Chapter_5/kernels_sim2.png", width = 8, height = 4)
+@
+
+<<echo= FALSE, eval = FALSE>>=
+## IF we wanted to forecast and hindcast after we fitted:
+IDEmodel <- IDE(f = z ~ s1 + s2 + 1,
+                data = SIM2$z_STIDF,
+                dt = as.difftime(1, units = "days"),
+                grid_size = 41,
+                kernel_basis = kernel_basis,
+                hindcast = 2,
+                forecast = 2)
+IDEmodel$set(sigma2_eps = fit_results_sim2$IDEmodel$get("sigma2_eps"),
+             sigma2_eta = fit_results_sim2$IDEmodel$get("sigma2_eta"),
+             k = fit_results_sim2$IDEmodel$get("k"))
+ST_grid_df <- predict(IDEmodel)
+gpred <- ggplot(ST_grid_df) +
+  geom_tile(aes(s1, s2,fill=Ypred)) +
+  facet_wrap(~t) + coord_fixed() +
+  scale_fill_distiller(palette="Spectral")
+gpredse <- ggplot(ST_grid_df) +
+  geom_tile(aes(s1, s2,fill=Ypredse)) +
+  facet_wrap(~t) + coord_fixed() +
+  scale_fill_distiller(palette="Spectral")
+@
+
+\subsection*{The Sydney Radar Data Set}
+
+\ifstandalone
+
+The radar data set contains data that are a subset of consecutive weather radar reflectivity images considered in the World Weather Research Programme (WWRP) Sydney 2000 Forecast Demonstration Project.  There are 12 images at 10-minute intervals starting at 08:25 UTC on 3 November, 2000 (i.e., 08:25--10:15 UTC).  The data were originally mapped to a $45 \times 45$ grid of 2.5-km pixels centered on the radar location. The data used here are for a region of dimension $28 \times 40$, corresponding to a 70\,km by 100\,km domain.  All reflectivities are given in ``decibels relative to Z'' (dBZ, a dimensional logarithmic unit used for weather radar relfectivities).
+
+\fi
+
+Analysis of the Sydney radar data set proceeds in much the same way as in the simulation examples. In this case, we choose to have a spatially invariant kernel, since the data are not  suggestive of spatially varying dynamics. We first load the Sydney radar data set as an \cc{STIDF} object.
+
+<<>>=
+data("radar_STIDF", package = "STRbook")
+@
+
+\noindent \ifstandalone \else As was seen  in Chapter 2, the Sydney radar data set exhibits clear movement (drift), making the IDE a good modeling choice for these data. \fi  We now call the function \fn{IDE} as before, with the added arguments \args{hindcast} and \args{forecast}, which indicate how many time intervals into the past, and how many into the future, we wish to predict for periods preceeding the training period (hindcast) and periods following the training period (forecast), respectively (see Section~\ref{sec:ValCrosVal} for more information on hindcasts and forecasts). In this case the data are at 10-minute intervals (one period), and we forecast and hindcast for two periods each (i.e., 20 minutes).
+
+<<>>=
+IDEmodel <- IDE(f = z ~ 1,
+                data = radar_STIDF,
+                dt = as.difftime(10, units = "mins"),
+                grid_size = 41,
+                forecast = 2,
+                hindcast = 2)
+@
+
+Fitting proceeds by calling \fn{fit.IDE}.
+
+<<eval = FALSE>>=
+fit_results_radar <- fit.IDE(IDEmodel,
+                             parallelType = 1)
+@
+
+\noindent Since this command will take a considerable amount of time on a standard machine, we  load the results directly from cache.
+
+<<echo = FALSE, eval = FALSE>>=
+save(fit_results_radar, file = "STRbook/data/IDE_Radar_results.rda")
+@
+
+<<>>=
+data("IDE_Radar_results", package = "STRbook")
+@
+
+The fitted kernel can be visualized as it was above.
+
+<<results = 'hide', fig.keep = 'none'>>=
+show_kernel(fit_results_radar$IDEmodel)
+@
+
+\noindent The kernel is again clearly shifted off-center and suggestive of transport in a predominantly easterly (and slightly northerly) direction. This is corroborated by visual inspection of the data. The estimated shift parameters are as follows.
+
+<<echo=FALSE>>=
+options(digits = 2)
+@
+
+<<>>=
+shift_pars <- (fit_results_radar$IDEmodel$get("k") %>%
+                   unlist())[3:4]
+print(shift_pars)
+@
+\noindent The magnitude of the estimated shift vector is hence indicative of a transport of $\sqrt{(5.5)^2 + (1.9)^2} = 5.82$\,km per 10-minute period, or 34.91\,km per hour.
+
+ The modulus of the possibly complex eigenvalues of the evolution matrix $\bM$ can be extracted as follows.
+
+<<>>=
+abs_ev <- eigen(fit_results_radar$IDEmodel$get("M"))$values %>%
+          abs()
+summary(abs_ev)
+@
+\noindent The largest absolute eigenvalue is considerably larger than that in the simulation study, suggesting more field persistence (although, since it is less than 1, the process is still stable). This persistence is expected, since the data clearly show patches of precipitation that are sustained and transported, rather than decaying, over time.
+
+When calling the function \fn{IDE}, we set up the object to be able to forecast 20 minutes into the future and hindcast 20 minutes into the past. These forecasts and hindcasts will be in the object returned from \fn{predict}.
+
+<<>>=
+ST_grid_df <- predict(fit_results_radar$IDEmodel)
+@
+
+\noindent The data frame \cc{ST\_grid\_df} contains the predictions in the field \cc{Ypred} and the prediction standard errors in the field \cc{Ypredse}. The field \cc{t}, in both our data and predictions, contains the date as well as the time; we now create another field \cc{time} that contains just the time of day.
+
+<<>>=
+radar_df$time <- format(radar_df$t, "%H:%M")
+ST_grid_df$time <- format(ST_grid_df$t, "%H:%M")
+@
+
+The code given below plots the data as well as the smoothed fields containing the hindcasts, the predictions, and the forecasts. So that we match the data plots with the prediction plots, timewise, we create empty fields corresponding to hindcast and forecast periods in the data frame containing the observations. This can be achieved easily using \fn{rbind.fill} from the package {\bf plyr}.
+
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=\linewidth,angle=0]{img/Chapter_5/IDEradarresults.png}
+\end{center}
+\caption{Observed data (left), and hindcasts, predictions, and forecasts using the IDE model (right). \label{fig:IDEradarresults}}
+\end{figure}
+
+
+
+<<fig.keep = 'none', results = 'hide', message = FALSE, warning = FALSE>>=
+## Add time records with missing data
+radar_df <- rbind.fill(radar_df,
+                       data.frame(time = c("08:05", "08:15",
+                                           "10:25", "10:35")))
+
+## Plot of data, with color scale capped to (-20, 60)
+gobs <- ggplot(radar_df) +
+  geom_tile(aes(s1, s2, fill = pmin(pmax(z, -20), 60))) +
+  fill_scale(limits = c(-20, 60), name = "Z") +
+  facet_wrap(~time) + coord_fixed() + theme_bw()
+
+## Plot of predictions with color scale forced to (-20, 60)
+gpred <- ggplot(ST_grid_df) +
+  geom_tile(aes(s1, s2, fill = Ypred)) +
+  facet_wrap(~time) + coord_fixed() + theme_bw() +
+  fill_scale(limits = c(-20, 60), name = "Ypred")
+@
+
+<<echo = FALSE, fig.keep = 'none', results = 'hide', message = FALSE, warning = FALSE>>=
+library("gridExtra")
+g <- grid.arrange(gobs, gpred,
+                  nrow = 1)
+ggsave(g, file = "./img/Chapter_5/IDEradarresults.png", width = 12, height = 7, dpi = 300)
+@
+
+The plots are shown in Figure~\ref{fig:IDEradarresults}. Notice how both the forecasts and the hindcasts incorporate the information on transport that is evident in the data. We did not plot prediction standard errors in this case, which is left as an exercise for the reader.
+
+<<echo = FALSE, fig.keep = 'none', results = 'hide', message = FALSE, warning = FALSE>>=
+data("radar_df", package = "STRbook")
+radar_df$time <- format(radar_df$t, "%H:%M")
+gobs <- ggplot(radar_df) +
+  geom_tile(aes(s1,s2,fill=pmin(pmax(z,-20),60))) +
+  scale_fill_distiller(palette = "Spectral",
+                       limits = c(-20,60), name = "dBZ") +
+  facet_wrap(~time,ncol = 6) + coord_fixed() + theme_bw()
+ggsave(gobs, file = "./img/Chapter_2/radar_data.png", width = 6, height = 3.8, dpi = 300)
+@
+
+%%%%%%%%%%% PLOT OF CIRCULAR FIELD %%%%%%%%%%%
+<<echo = FALSE, fig.keep = 'none', results = 'hide', message = FALSE, warning = FALSE>>=
+IDEmodel <- simIDE(T = 10, nobs = 100, k_spat_invariant = 0)$IDEmodel
+kernel_basis <- IDEmodel$get("kernel_basis")
+k <- IDEmodel$get("k")
+s <- IDEmodel$get("s")
+nk <- IDEmodel$get("nk")
+ndim <- dimensions(kernel_basis[[1]])
+K <- IDE:::construct_kernel(kernel_basis, k)
+s$s_grid_df$hor <- eval_basis(kernel_basis[[3]],
+                              s$s_grid_mat) %*% k[[3]] %>% as.numeric()
+s$s_grid_df$ver <- eval_basis(kernel_basis[[4]],
+                              s$s_grid_mat) %*% k[[4]] %>% as.numeric()
+
+scale <- 0.3
+gkernel1 <- ggplot(data = s$s_grid_df, aes(x = s1, y = s2)) +
+  geom_segment(aes(xend = s1 - hor * scale, yend = s2 -
+                     ver * scale, colour = atan2(ver,-hor)), size = 0.2,
+               arrow = arrow(length = unit(0.1, "cm"))) +
+  scale_colour_gradient2(low = "black", high = "black", mid = "green",name = "angle") +
+   xlab(expression(s[1])) + ylab(expression(s[2])) + theme_bw() + coord_fixed() +
+  geom_point(data = data.frame(s1 = 0.25, s2 = 0.8), col = "red", size = 12, pch = '+')
+
+rgrid <- expand.grid(r1 = seq(-1,1,length.out = 500),
+                     r2 = seq(-1,1,length.out = 500))
+rgrid$K <- as.numeric(K(s = matrix(c(0.25, 0.8),1,2), rgrid))
+rgrid <- rgrid - matrix(rep(c(0.25,0.8),nrow(rgrid)),ncol=2,byrow = TRUE)
+gkernel2 <- ggplot(rgrid) + geom_contour(aes(r1,r2,z=K, colour = ..level..)) +
+            scale_colour_distiller(palette = "Spectral", name = expression(m(bold(s^o),bold(x)))) + theme_bw() +
+  coord_fixed(xlim = c(-0.25,0.25), ylim = c(-0.25,0.25)) +
+  xlab(expression(x[1] - s[1]^o)) + ylab(expression(x[2] - s[2]^o))
+
+ggsave(grid.arrange(gkernel1, gkernel2, nrow = 1),
+       file = "./img/Chapter_5/spat_kernel.png", width = 9, height = 4, dpi = 300)
+@
+
+\end{document}
+

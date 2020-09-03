@@ -1,0 +1,187 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab3A}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\ifstandalone
+
+\section*{Lab 4.3:  Spatio-temporal modeling of GAMs with {\bf mgcv}}
+
+We often seek more flexible models that can accommodate nonlinear structure in the mean function.  One successful approach to this problem has been through the use of {\it generalized additive models} or GAMs. In general, these models consider a transformation of the mean response to be an additive form, in which the additive components are smooth functions (e.g., splines) of the covariates.  For example, we might consider a data model
+\begin{equation}
+z(\bs;t) | Y(\bs;t), \gamma \; \sim \; ind. \; EF(Y(\bs;t), \gamma),\quad \bs \in D_s, t \in D_t,
+\label{eq:EFdist}
+\end{equation}  and a mean response that is modeled additively as
+\begin{equation}\label{eq:GAM_mean_model}
+g(Y(\bs;t)) = \bx(\bs;t)' \bfbeta + \sum_{i=1}^{n_f} f_i(\bx(\bs;t)) + \nu(\bs;t),
+\end{equation}
+ where $g(\cdot)$ is a specified monotonic link function, $\bx(\bs;t)$ is a $p$-dimensional vector of covariates for spatial location $\bs$ and time $t$, $f_i(\cdot)$ are functions of the covariates, the spatial locations, or the time index, and $\nu(\bs;t)$ is a spatio-temporal random effect.  Typically, the functions $f_i(\cdot)$, $i = 1,\dots, n_f$, are modeled in terms of a truncated basis expansion, for example, $f_i(x_1(\bs;t)) = \sum_{k=1}^{r_1} \phi_k(x_1(\bs;t)) \alpha_{ik}$, where $\phi_k$, $k = 1,\dots, r_1$, are the basis functions. Further, just as one can add random effects to generalized linear models to get generalized linear mixed models, we can also add random effects to the mean response in \eqref{eq:GAM_mean_model} to get generalized additive mixed models (GAMMs).
+
+GAMs can also be considered as the process model in a hierarchical statistical model. The primary difference between the GAM approach and a random-effects model using spatio-temporal basis functions is the additional flexibility that one can get by considering nonlinear functions of spatio-temporal covariates.  Note also that GAMs typically assume that the basis functions are smooth functions, whereas there is no such requirement for spatio-temporal basis function models.  That being said, there may also be advantages in considering these models directly in the GAM framework due to efficient computation and estimation approaches that have been established in the GAM literature.
+
+\else
+
+\addcontentsline{toc}{section}{Lab 4.4: Non-Gaussian Spatio-Temporal GAMs with {\bf mgcv}}
+\section*{Lab 4.4: Non-Gaussian Spatio-Temporal GAMs with {\bf mgcv}}
+\markright{Lab 4.4: Non-Gaussian Spatio-Temporal GAMs with {\bf mgcv}}
+
+\fi
+
+Generalized additive models (GAMs) and generalized additive mixed models (GAMMs) can be implemented quickly and efficiently with the package {\bf mgcv} and the functions \fn{gam} and \fn{gamm}, respectively.  For a comprehensive treatment of GAMs and GAMMs and their implementation through {\bf mgcv}, see \cite{R_mgcv}\index[aut]{Wood, S.~N.}.
+
+In this Lab we aim to predict the expected counts at arbitrary spatio-temporal locations, from the vector of observed counts $\bZ$. \ifstandalone The data we use are from the North American Breeding Bird Survey.\footnote{https://www.pwrc.usgs.gov/bbs/rawdata/}  In particular, we consider yearly counts of the  Carolina wren ({\it Thryothorus ludovicianus})  at BBS routes for the period 1994--2014. \else The data we use are the Carolina wren counts in the BBS data set described in Section \ref{sec:STdata}. \fi We require the package {\bf mgcv} as well as {\bf  dplyr, tidyr, ggplot2} and {\bf  STRbook}.
+
+<<message=FALSE,results='hide', warning = FALSE>>=
+library("dplyr")
+library("ggplot2")
+library("mgcv")
+library("STRbook")
+library("tidyr")
+data("MOcarolinawren_long", package = "STRbook")
+@
+
+GAMs and GAMMs rely on constructing smooth functions of the covariates, and in a spatio-temporal context these will inevitably include space and time. In this Lab we consider the following simple GAM\ifstandalone\else~(see \eqref{eq:GAM_mgcv})\fi:
+
+\begin{equation}\label{eq:GAMform}
+g(Y(\bs;t)) = \beta + f(\bs;t) + \nu(\bs;t),
+\end{equation}
+\noindent where $g(\cdot)$ is a link function, $\beta$ is an intercept, the function $f(\bs;t)$ is a random smooth function of space and time, and $\nu(\bs;t)$ is a spatio-temporal white-noise error process.
+
+In {\bf mgcv}, the random function $f(\bs;t)$ is generally decomposed using a separable \emph{spline} basis. Now, there are several basis functions that can be used to reconstruct $f(\bs;t)$, some of which are knot-based (e.g., B-splines). For the purpose of this Lab, it is sufficient to know that splines, of whatever order, are decomposed into a set of basis functions. Thus, $f(\bs;t)$ is decomposed as $\sum_{i=1}^{r_1}\phi_{1i}(\bs;t)\alpha_{1i}$, where the $\{\alpha_{1i}\}$ are unknown random effects that need to be predicted, and the $\{\phi_{1i}\}$ are given below.
+
+There are a number of basis functions that can be chosen. Those derived from thin-plate regression splines are convenient, as they are easily amenable to multiple covariates (e.g., functions of $(\bs;t) \equiv (s_1,s_2; t)$). Thin-plate splines are isotropic and invariant to rotation but not invariant to covariate scaling. Hence, the use of thin-plate splines for fitting a curve over space \emph{and} time is not recommended,  since units in time are different from those in space.
+
+To combine interacting covariates with different units, such as space and time, {\bf mgcv} implements a tensor-product structure, whereby the basis functions smoothing the individual covariates are combined productwise. That is,
+$$
+f(\bs;t) = \sum_{i=1}^{r_1}\sum_{j=1}^{r_2}\phi_{1i}(\bs)\phi_{2j}(t)\alpha_{ij} \equiv \bfphi(\bs;t)' \bfalpha.
+$$
+\noindent The function \fn{te} forms the product from the marginals; for example, in our case this can achieved by using \fn{te}\cc{(lon,lat,t)}. Other arguments can be passed to \fn{te} for added functionality; for example, the basis-function class is specifed through \args{bs}, the number of basis functions through \args{k}, and the dimension of each spline through \args{d}. In this case we employ a thin-plate spline basis over longitude and latitude (\strn{"tp"}) and a cubic regression spline over time (\strn{"cr"}). A GAM formula for \eqref{eq:GAMform} is implemented as follows 
+
+<<>>=
+f <- cnt ~ te(lon, lat, t,         # inputs over which to smooth
+              bs = c("tp", "cr"),  # types of bases
+              k = c(50, 10),       # knot count in each dimension
+              d = c(2, 1))         # (s,t) basis dimension
+@
+
+\noindent We chose $r_1 = 50$ basis functions for the spatial component and $r_2 = 10$ for the temporal component. These values were chosen after some trial and error. The number of knots could have been set using cross-validation\ifstandalone. \else; see Chapter 3. \fi In general, the estimated degrees of freedom should be considerably lower than the total number of knots; if this is not the case, probably the number of knots should be increased.
+
+In Lab 3.4 we saw that the Carolina wren counts are over-dispersed. To account for this, we use the negative-binomial distribution to model the response \ifstandalone\else in \eqref{eq:EFdist}\fi~(a quasi-Poisson model would also be suitable). The \fn{gam} function is called in the code below, where we specify the negative-binomial family and a log link (the function $g(\cdot)$ in \eqref{eq:GAMform}):
+
+<<message=FALSE,results='hide',eval=TRUE>>=
+cnts <- gam(f, family = nb(link = "log"),
+             data = MOcarolinawren_long)
+@
+
+The returned object is a \cc{gam} object, which extends \cc{glm} and \cc{lm} objects (i.e., functions that can be applied to \cc{glm} and \cc{lm} objects, such as \fn{residuals}, can also be applied to \cc{gam} objects). The negative-binomial distribution handles over-dispersion in the data through a size parameter $r$, such that, for a fixed mean, the negative-binomial distribution approaches the Poisson distribution as $r \rightarrow \infty$. In this case the estimated value for $r$ (named \cc{Theta} in {\bf mgcv}) is
+
+<<>>=
+cnts$family$getTheta(trans = 1)
+@
+
+\noindent which is not large and suggestive of over-dispersion. Several graphical diagnostics relating to the fit can be explored using the \fn{gam.check} function.
+
+<<echo=FALSE, results='hide', message=FALSE>>=
+## Proof we need to do trans = 1
+DF <- data.frame(y = rnbinom(10000, size = 10, mu = 1000))
+GAM <- gam(y ~ 1, data = DF,family = nb(link = "log"))
+GAM$family$getTheta(trans = 1)
+@
+
+To predict the field at unobserved locations using the hierarchical model, we first construct a space-time grid upon which to predict.
+
+<<>>=
+MOlon <- MOcarolinawren_long$lon
+MOlat <- MOcarolinawren_long$lat
+
+## Construct space-time grid
+grid_locs <- expand.grid(lon = seq(min(MOlon) - 0.2,
+                                   max(MOlon) + 0.2,
+                                   length.out = 80),
+                         lat = seq(min(MOlat) - 0.2,
+                                   max(MOlat) + 0.2,
+                                   length.out = 80),
+                         t = 1:max(MOcarolinawren_long$t))
+@
+\noindent Then we call the function \fn{predict} which, when \args{se.fit} \cc{=} \num{TRUE}, returns a list containing the predictions and their associated prediction standard errors.
+
+<<>>=
+X <- predict(cnts, grid_locs, se.fit = TRUE)
+@
+
+Specifically, the predictions and prediction standard errors are available in \cc{X\$fit} and \cc{X\$se.fit}, respectively. These can be plotted using {\bf ggplot2} as follows.
+
+<<results='hide',message=FALSE,echo=TRUE>>=
+## Put data to plot into data frame
+grid_locs$pred <- X$fit
+grid_locs$se <- X$se.fit
+
+## Plot predictions and overlay observations
+g1 <- ggplot() +
+    geom_raster(data = grid_locs,
+                aes(lon, lat, fill = pmin(pmax(pred, -1), 5))) +
+    facet_wrap(~t, nrow = 3, ncol = 7) +
+    geom_point(data = filter(MOcarolinawren_long, !is.na(cnt)),
+               aes(lon, lat),
+               colour = "black", size = 3) +
+    geom_point(data=filter(MOcarolinawren_long, !is.na(cnt)),
+               aes(lon, lat, colour = log(cnt)),
+               size = 2) +
+    fill_scale(limits = c(-1, 5),
+               name = expression(log(Y[t]))) +
+    col_scale(name = "log(cnt)", limits=c(-1, 5)) +
+    theme_bw()
+
+## Plot prediction standard errors
+g2 <- ggplot() +
+    geom_raster(data = grid_locs,
+                aes(lon, lat, fill = pmin(se, 2.5))) +
+    facet_wrap(~t, nrow = 3, ncol = 7) +
+    fill_scale(palette = "BrBG",
+               limits = c(0, 2.5),
+               name = expression(s.e.)) +
+    theme_bw()
+@
+
+<<results='hide',message=FALSE,echo=FALSE>>=
+ggsave(g1, file="./img/Chapter_4/GAM_predictions.png",
+       height=6,width=12)
+ggsave(g2, file="./img/Chapter_4/GAM_se.png",
+       height=6,width=12)
+@
+
+
+The plots are shown in Figures~\ref{fig:GAMpred} and~\ref{fig:GAMse}, respectively. One may also use the \fn{plot.gam} function on \cc{cnts} to quickly generate plots of the tensor products.
+
+
+\begin{figure}
+ \begin{center}
+\includegraphics[width=0.9\textwidth,angle=0]{img/Chapter_4/GAM_predictions}
+ \end{center}
+ \caption{Posterior mean of $\log(Y(\cdot))$ on a grid for $t=1$ (the year 1994) to $t=21$ (the year 2014), based on a negative-binomial data model using the package {\bf mgcv}. The log of the observed count is shown in circles using the same color scale.}
+ \label{fig:GAMpred}
+ \end{figure}
+
+\begin{figure}
+ \begin{center}
+\includegraphics[width=0.9\textwidth,angle=0]{img/Chapter_4/GAM_se}
+ \end{center}
+ \caption{Posterior standard deviation (i.e., prediction standard error) of $\log(Y(\cdot))$ on a grid for $t=1$ (the year 1994) to $t=21$ (the year 2014), based on a negative-binomial data model using the package {\bf mgcv}.}
+ \label{fig:GAMse}
+ \end{figure}
+
+\ifstandalone
+\bibliography{LitReviewBib,LitReviewR}
+\fi
+
+
+\end{document}

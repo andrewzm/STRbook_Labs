@@ -1,0 +1,534 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap2_Lab2}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\addcontentsline{toc}{section}{Lab 2.2: Visualization}
+\section*{Lab 2.2: Visualization}
+\markright{Lab 2.2: Visualization}
+
+%\subsection*{Packages and Data Preparation}
+
+In this Lab we shall visualize maximum temperature data in the NOAA data set. Spe\-cif\-ic\-ally, we consider the maximum recorded temperature between May 1993 and September 1993 (inclusive). The packages we need are {\bf animation}, {\bf dplyr}, {\bf ggplot2}, {\bf gstat}, {\bf maps}, and {\bf STRbook}.
+
+<<results='hide',message=FALSE, warning = FALSE>>=
+library("animation")
+library("dplyr")
+library("ggplot2")
+library("gstat")
+library("maps")
+library("STRbook")
+@
+
+<<echo=FALSE,results='hide',message=FALSE>>=
+library("grid")
+library("gridExtra")
+@
+\noindent In order to ensure consistency of results and visualizations we fix the seed to 1.
+
+<<>>=
+set.seed(1)
+@
+
+We now load the data set and take a subset of it using the function \fn{filter}.
+
+<<message=FALSE, warning = FALSE>>=
+data("NOAA_df_1990", package = "STRbook")
+Tmax <- filter(NOAA_df_1990,     # subset the data
+              proc == "Tmax" &   # only max temperature
+              month %in% 5:9 &   # May to September
+              year == 1993)      # year of 1993
+@
+
+\noindent The data frame we shall work with is hence denoted by \texttt{Tmax}. The first six records in \texttt{Tmax} are:
+<<message=FALSE>>=
+Tmax %>% select(lon, lat, date, julian, z) %>% head()
+@
+
+\noindent The first record has a Julian date of 728050, corresponding to 01 May 1993. To ease the following operations, we create a new variable \texttt{t} that is equal to 1 when \texttt{julian ==} \num{728050} and increases by 1 for each day in the record.
+
+<<message=FALSE>>=
+Tmax$t <- Tmax$julian - 728049     # create a new time variable
+@
+
+
+The first task faced by the spatio-temporal modeler is data visualization. This is an important preliminary task that needs to be carried out prior to the exploratory-data-analysis stage and the modeling stages. Throughout, we shall make extensive use of the \emph{grammar of graphics} package {\bf ggplot2}, which is a convenient way to plot and visualize data and results in \texttt{R}. The book by \citet{R_ggplot2}\index[aut]{Wickham, H.} provides a comprehensive introduction to {\bf ggplot2}.
+
+\subsection*{Spatial Plots}
+
+Visualization techniques vary with the data being analyzed. The NOAA data are collected at stations that are fixed in space; therefore, initial plots should give the modeler an idea of the overall spatial variation of the observed data. If there are many time points, usually only a selection of time points are chosen for visualization. In this case we choose three time points.
+
+<<>>=
+Tmax_1 <- subset(Tmax, t %in% c(1, 15, 30))  # extract data
+@
+
+\noindent The variable \texttt{Tmax\_1} contains the data associated with the first, fifteenth, and thirtieth day in \cc{Tmax}. We now plot this data subset using {\bf ggplot2}. Note that the function \fn{col\_scale}, below, is simply a wrapper for the {\bf ggplot2} function \fn{scale\_colour\_distiller}, and is provided with {\bf STRbook}.
+
+<<message=FALSE>>=
+NOAA_plot <- ggplot(Tmax_1) +             # plot points
+    geom_point(aes(x = lon,y = lat,       # lon and lat
+                   colour = z),           # attribute color
+               size = 2) +                # make all points larger
+    col_scale(name = "degF") +            # attach color scale
+    xlab("Longitude (deg)") +             # x-axis label
+    ylab("Latitude (deg)") +              # y-axis label
+    geom_path(data = map_data("state"),   # add US states map
+          aes(x = long, y = lat, group = group)) +
+    facet_grid(~date) +                   # facet by time
+    coord_fixed(xlim = c(-105, -75),
+                ylim = c(25, 50))  +      # zoom in
+    theme_bw()                            # B&W theme
+@
+
+<<echo=FALSE>>=
+ggsave(NOAA_plot,file="img/Chapter_2/NOAA3.png",width=8,height=2.5,dpi=300)
+@
+
+\noindent \texttt{NOAA\_plot} is a plot of the spatial locations of the stations. The function \fn{aes} (short for aesthetics) for \fn{geom\_point} identifies which field in the data frame \cc{Tmax\_1} is the $x$-coordinate and which is the $y$-coordinate. {\bf ggplot2} also allows one to attribute color (and size, if desired) to other fields in a similar fashion. \ifstandalone Use the command \fn{print}\texttt{(NOAA\_plot)} to display the plot. \else The command \fn{print}\texttt{(NOAA\_plot)} generates the figure shown in Figure \ref{fig:NOAA}. \fi As can be seen, the stations are approximately regularly spaced within the domain.
+
+When working with geographic data, it is also good practice to put the spatial locations of the data into perspective, by plotting country or state boundaries together with the data locations. Above, the US state boundaries are obtained from the {\bf maps} package through the command \fn{map\_data}(\strn{"state"}). The boundaries are then overlayed on the plot using \fn{geom\_path}, which simply joins the points and draws the resulting path with \texttt{x} against \texttt{y}. Projections can be applied by adding another layer to the {\bf ggplot2} object using \fn{coord\_map}. For example adding + \fn{coord\_map}(\args{projection} = \strn{"sinusoidal"}) will plot using a sinusoidal projection. One can also plot in three dimensions by using \args{projection} = \strn{"ortho"}.
+
+In this example we have used {\bf ggplot2} to plot \emph{point-referenced data}. \ifstandalone Plots of regular lattice data are generated similarly by using \fn{geom\_tile} instead. Plots of irregular lattice data are generated using \fn{geom\_polygon}. \else Plots of regular lattice data, such as those shown in Figure \ref{fig:SST}, are generated similarly by using \fn{geom\_tile} instead. Plots of irregular lattice data are generated using \fn{geom\_polygon}. \fi As an example of the latter, consider the BEA income data set. These data can be loaded from {\bf STRbook} as follows.
+
+<<>>=
+data("BEA", package = "STRbook")
+head(BEA %>% select(-Description), 3)
+@
+\noindent From the first three records, we can see that the data set contains the personal income, in dollars, by county and by year for the years 1970, 1980 and 1990.  These data need to be merged with Missouri county data which contain geospatial information. These county data, which are also available in {\bf STRbook}, were originally processed from a shapefile that was freely available online.\footnote{\url{http://msdis-archive.missouri.edu/archive/metadata_gos/MO_2010_TIGER_Census_County_Boundaries.xml}}
+
+<<>>=
+data("MOcounties", package = "STRbook")
+head(MOcounties %>% select(long, lat, NAME10), 3)
+@
+
+\noindent The data set contains the boundary points for the counties, amongst several other variables which we do not explore here. For example, to plot the boundary of the first county one can simply type
+
+<<eval = FALSE>>=
+County1 <- filter(MOcounties, NAME10 == "Clark, MO")
+plot(County1$long, County1$lat)
+@
+
+To add the BEA income data to the county data containing geospatial information we use \fn{left\_join}.
+
+<<>>=
+MOcounties <- left_join(MOcounties, BEA, by = "NAME10")
+@
+Now it is just a matter of calling \fn{ggplot} with \fn{geom\_polygon} to display the BEA income data as spatial polygons. We also use \fn{geom\_path} to draw the county boundaries. Below we show the code for 1970; similar code would be needed for 1980 and 1990. Note the use of the \args{group} argument to identify which points correspond to which county. \ifstandalone \else The resulting plots are shown in Figure~\ref{fig:BEA}. \fi
+
+<<fig.keep = 'none', results='hide'>>=
+g1 <- ggplot(MOcounties) +
+    geom_polygon(aes(x = long, y = lat,     # county boundary
+                     group = NAME10,        # county group
+                     fill = log(X1970))) +  # log of income
+    geom_path(aes(x = long, y = lat,        # county boundary
+                  group = NAME10)) +        # county group
+    fill_scale(limits = c(7.5,10.2),
+               name = "log($)")  +
+    coord_fixed() + ggtitle("1970") +       # annotations
+    xlab("x (m)") + ylab("y (m)") + theme_bw()
+@
+
+\noindent Type \fn{print}\cc{(g1)} in the \R~ console to display the plot.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% PLOTS FOR BEA DATA %%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+<<echo=FALSE,message=FALSE,warning=FALSE,results='hide'>>=
+g2 <- ggplot(MOcounties) +
+    geom_polygon(aes(x=long,y=lat,group=id,fill=log(X1980))) +
+    geom_path(aes(x=long,y=lat,group=id)) +
+    scale_fill_distiller(palette = "Spectral",limits=c(7.5,10.2),name="log($)")  +
+    coord_fixed()  + ggtitle("1980") + xlab("x (m)")  + theme_bw() +
+    ylab("y (m)")
+
+g3 <- ggplot(MOcounties) +
+    geom_polygon(aes(x=long,y=lat,group=id,fill=log(X1990))) +
+    geom_path(aes(x=long,y=lat,group=id)) +
+    scale_fill_distiller(palette = "Spectral",limits=c(7.5,10.2),name="log($)")  +
+    coord_fixed() + ggtitle("1990")   + xlab("x (m)")  + theme_bw() +
+    ylab("y (m)")
+
+ggsave("img/Chapter_2/BEAplot.png",arrangeGrob(g1,g2,g3,nrow=1),width=10,height=2,dpi=300)
+@
+
+
+\subsection*{Time-Series Plots}
+
+Next, we look at the time series associated with the maximum temperature data in the NOAA data set. One can plot the time series at all 139 weather stations (and this is  recommended); here we look at the time series at a set of stations selected at random. We first obtain the set of unique station identifiers, choose 10 at random from these, and extract the data associated with these 10 stations from the data set.
+
+<<message=FALSE>>=
+UIDs <- unique(Tmax$id)                     # extract IDs
+UIDs_sub <- sample(UIDs, 10)                # sample 10 IDs
+Tmax_sub <- filter(Tmax, id %in% UIDs_sub)  # subset data
+@
+
+To visualize the time series at these stations, we use \emph{facets}. When given a long data frame, one can first subdivide the data frame into groups and generate a plot for each group. The following code displays the time series at each station. The command we use is \fn{facet\_wrap}, which automatically adjusts the number of rows and columns in which to display the facets. The command \fn{facet\_grid} instead uses columns for one grouping variable and rows for a second grouping variable, if specified.
+
+<<>>=
+TmaxTS <- ggplot(Tmax_sub) +
+    geom_line(aes(x = t, y = z)) + # line plot of z against t
+    facet_wrap(~id, ncol = 5) +    # facet by station
+    xlab("Day number (days)") +    # x label
+    ylab("Tmax (degF)") +          # y label
+    theme_bw() +                   # BW theme
+    theme(panel.spacing = unit(1, "lines")) # facet spacing
+
+@
+
+<<echo=FALSE>>=
+ggsave(TmaxTS,file="img/Chapter_2/TmaxTS.png",width=7.5,height=2.6,dpi=300)
+@
+
+
+The argument \verb|~id| supplied to \fn{facet\_wrap} is a \texttt{formula} in \texttt{R}. In this case, the formula is used to denote the groups by which we are faceting. The syntax \verb|x~y| can be used to facet by two variables. The command \fn{print}\texttt{(TmaxTS)} produces \ifstandalone the required figure. \else Figure~\ref{fig:TmaxTS}. \fi
+
+\subsection*{Hovm{\"o}ller Plots}
+
+A Hovm{\"o}ller plot is a two-dimensional space-time visualization, where space is collapsed (projected or averaged) onto one dimension; the second dimension then denotes time. A Hovm{\"o}ller plot can be generated relatively easily if the data are on a space-time grid, but unfortunately this is rarely the case! This is where data-wrangling techniques such as those explored in Lab 2.1 come in handy.
+
+Consider the latitudinal Hovm\"oller plot. The first step is to generate a regular grid of, say, 25 spatial points and 100 temporal points using the function \fn{expand.grid}, with limits set to the latitudinal and temporal limits available in the data set.
+
+<<>>=
+lim_lat <- range(Tmax$lat)        # latitude range
+lim_t <- range(Tmax$t)            # time range
+lat_axis <- seq(lim_lat[1],       # latitude axis
+                lim_lat[2],
+                length=25)
+t_axis <- seq(lim_t[1],           # time axis
+              lim_t[2],
+              length=100)
+lat_t_grid <- expand.grid(lat = lat_axis,
+                          t = t_axis)
+@
+
+We next need to associate each station's latitudinal coordinate with the closest one on the grid. This can be done by finding the distance from the station's latitudinal coordinate to each point of the grid, finding which gridpoint is the closest, and allocating that to it. We store the gridded data in \texttt{Tmax\_grid}.
+
+<<message=FALSE>>=
+Tmax_grid <- Tmax
+dists <- abs(outer(Tmax$lat, lat_axis, "-"))
+Tmax_grid$lat <- lat_axis[apply(dists, 1, which.min)]
+@
+
+Now that we have associated each station with a latitudinal coordinate, all that is left is to group by latitude and time, and then we average all station values falling in the latitude--time bands.
+
+<<>>=
+Tmax_lat_Hov <- group_by(Tmax_grid, lat, t) %>%
+                summarise(z = mean(z))
+@
+
+In this case, every latitude--time band contains at least one data point, so that the Hovm\"oller plot contains no missing points on the established grid. This may not always be the case, and simple interpolation methods, such as \fn{interp} from the {\bf akima} package, can be used to fill out grid cells with no data.
+
+<<echo=FALSE,eval=FALSE>>=
+grid_interp <- idw(formula = z ~ 1,      # do IDW on mean-zero data
+                locations = ~lat+t,      # latitude / time coordinates
+                data=Tmax,               # data set
+                newdata = lat_t_grid)    # grid on which to interpolate
+lat_t_grid$z <- grid_interp$var1.pred    # assign gridded predictions
+@
+
+
+Plotting gridded data is facilitated using the {\bf ggplot2} function \fn{geom\_tile}. The function \fn{geom\_tile} is similar to \fn{geom\_point}, except that it assumes regularly spaced data and automatically uses rectangular patches in the plot. Since rectangular patches are ``filled,'' we use the {\bf STRbook} function \fn{fill\_scale} instead of \fn{col\_scale}, which takes the legend title in the argument \args{name}.
+
+<<>>=
+Hovmoller_lat <- ggplot(Tmax_lat_Hov) +            # take data
+        geom_tile(aes(x = lat, y = t, fill = z)) + # plot
+        fill_scale(name = "degF") +     # add color scale
+        scale_y_reverse() +             # rev y scale
+        ylab("Day number (days)") +     # add y label
+        xlab("Latitude (degrees)") +    # add x label
+        theme_bw()                      # change theme
+@
+
+<<echo=FALSE>>=
+station <- 13966
+station_lon <- filter(Tmax,id == 13966)$lon[1]
+station_lat <- filter(Tmax,id == 13966)$lat[1]
+Hovmoller_lat <- Hovmoller_lat + geom_vline(xintercept = station_lat,linetype='dashed')
+@
+The function \fn{scale\_y\_reverse} ensures that time increases from top to bottom, as is typical in Hovm{\"o}ller plots. We can generate a longitude-based Hovm{\"o}ller plot in the same way. \ifstandalone Type \fn{print}\texttt{(Hovmoller\_lat)} in the \R~ console to display the plot. \else The resulting Hovm\"oller plots are shown in Figure \ref{fig:Hovmoller_NOAA}.\fi
+
+
+<<message=FALSE,echo=FALSE,fig.width=7,fig.height=4,results='hide'>>=
+lim_lon <- range(Tmax$lon)
+lim_t <- range(Tmax$t)
+lon_axis <- seq(lim_lon[1],
+                lim_lon[2],
+                length=25)
+lon_t_grid <- expand.grid(lon = lon_axis,
+                          t = t_axis)
+Tmax_grid$lon <- lon_axis[apply(fields::rdist(Tmax$lon,lon_axis),1,which.min)]
+Tmax_lon_Hov <- group_by(Tmax_grid,lon,t) %>%
+                dplyr::summarise(z = mean(z))
+Hovmoller_lon <- ggplot(Tmax_lon_Hov) +
+    geom_tile(aes(x=lon, y=t, fill = z)) + scale_y_reverse() +
+    fill_scale(name = "degF") + ylab("Day number (days)") + xlab("Longitude (deg)") + labs(fill="degF")+
+    theme_bw() + geom_vline(xintercept = station_lon,linetype="dashed")
+@
+
+<<echo=FALSE>>=
+NOAA_Hovmoller <- arrangeGrob(Hovmoller_lon,Hovmoller_lat,nrow=1)
+ggsave(NOAA_Hovmoller,file="img/Chapter_2/NOAA_Hovmoller.png",width=8,height=4,dpi=300)
+@
+
+\subsection*{Animations}
+
+To generate an animation in \cc{R}, one can use the package {\bf animation}. First, we define a function that plots a spatial map of the maximum temperature as a function of time:
+
+<<eval=TRUE>>=
+Tmax_t <- function(tau) {
+    Tmax_sub <- filter(Tmax, t == tau)        # subset data
+    ggplot(Tmax_sub) +
+        geom_point(aes(x = lon,y = lat, colour = z),   # plot
+                   size = 4) +                         # pt. size
+        col_scale(name = "z", limits = c(40, 110)) +
+        theme_bw() # B&W theme
+}
+@
+
+
+\noindent The function above takes a day number \cc{tau}, filters the data frame according to the day number, and then plots the maximum temperature at the stations as a spatial map.
+
+Next, we construct a function that plots the data for every day in the data set. The function that generates the animation within an HTML webpage is \fn{saveHTML}. This takes the function that plots the sequence of images and embeds them in a webpage (by default named \cc{index.html}) using JavaScript. The function \fn{saveHTML} takes many arguments; type the command
+
+<<eval=FALSE>>=
+help(saveHTML)
+@
+\noindent in the \cc{R} console for more details.
+
+
+<<eval=FALSE>>=
+gen_anim <- function() {
+    for(t in lim_t[1]:lim_t[2]){  # for each time point
+       plot(Tmax_t(t))            # plot data at this time point
+    }
+}
+
+ani.options(interval = 0.2)     # 0.2s interval between frames
+saveHTML(gen_anim(),            # run the main function
+         autoplay = FALSE,      # do not play on load
+         loop = FALSE,          # do not loop
+         verbose = FALSE,       # no verbose
+         outdir = ".",          # save to current dir
+         single.opts = "'controls': ['first', 'previous',
+                                     'play', 'next', 'last',
+                                      'loop', 'speed'],
+                                      'delayMin': 0",
+         htmlfile = "NOAA_anim.html")  # save filename
+@
+
+To view the animation, load \cc{NOAA\_anim.html} from your working directory. The animation reveals dynamics within the spatio-temporal data that are not apparent using other visualization methods. For example, the maximum temperature clearly drifts from west to east at several points during the animation. This suggests that a dynamic spatio-temporal model that can capture this drift could provide a good fit to these data.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% PLOTS FOR SST DATA %%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+<<echo=FALSE,results='hide',message=FALSE,warning=FALSE>>=
+library(tidyr)
+Landmask <- read.table("data/SSTlandmask.dat",col.names = "mask")
+SSTlonlat <- read.table("data/SSTlonlat.dat",col.names = c("lon","lat"))
+SSTdata <- read.table("data/SST011970_032003.dat")
+
+SST <- crossing(data.frame(t = 1:ncol(SSTdata)),cbind(SSTlonlat,Landmask))
+SST$z <- as.numeric(as.matrix(SSTdata))
+SST$month <- (SST$t - 1) %% 12 + 1
+SST$year <- floor((SST$t - 0.001) /12 ) + 1970
+SST$date <- format(as.Date(paste0(SST$year,'-',SST$month,'-1')),format="%m-%Y")
+SST$anom <- ifelse(SST$mask==0,SST$z,NA)
+year_list <- c(1989,1993,1998)
+SST_sub <- filter(SST,month==1 & year %in% year_list)
+SST_plot <- ggplot(SST_sub) + coord_fixed() + fill_scale(name = "degC") +
+    col_scale(name = "degC") + facet_grid(~date) + theme_bw()
+SSTplot1 <- SST_plot + aes(lon,lat,fill=anom) + geom_tile() + xlab("Longitude (deg)") +
+    ylab("Latitude (deg)")
+ggsave(SSTplot1,file="img/Chapter_2/SST3.png",width=7.5,height=2.1)
+
+SSTplot1a <- ggplot(filter(SST_sub,year==1998)) + coord_fixed() + fill_scale(name = "anom (degC)") +
+    col_scale(name = "degC") + facet_grid(~date) + theme_bw() + aes(lon,lat,z=anom, colour=..level..) +
+    geom_contour() + xlab("Longitude (deg)") +
+    ylab("Latitude (deg)")
+ggsave(SSTplot1a,file="img/Chapter_2/SST3c.png",dpi=300,width=5,height=1.8)
+
+library(lattice)
+p <- list()
+for(i in seq_along(year_list)) {
+    png(paste0("img/Chapter_2/SSTwire",i,".png"),width = 4000,height=4000,res =300)
+    p[[i]] <- wireframe(anom ~ lon+lat,
+               data=filter(SST_sub,year==year_list[i]),
+               colorkey=TRUE,drape=TRUE,
+               col.regions = rainbow(100, s = 1, v = 1, start = 0,
+                                     end = max(1,100 - 1)/100, alpha = 1),
+               zlim2 = c(-5,5),
+               xlab=list(label="Longitude (deg)",rot=30),
+               ylab=list(label="Latitude (deg)",rot=-40),
+               zlab=list(label="Anomaly (degC)",rot=90))
+    plot(update(p[[i]], par.settings = list(fontsize = list(text = 40, points = 4))))
+    dev.off()
+}
+
+#library(plotly)
+#plotly_POST(SSTplot1a,filename="SSTcontour",sharing="public")
+#py <- plot_ly(username="andrewzm", key="xcIvNrPB^5R4na")
+Tmax_2 <- subset(Tmax,t %in% c(1))      # extract data
+NOAA_plot2 <- ggplot(Tmax_2) +      # plot points
+    geom_point(aes(x=lon,y=lat,           # lon and lat
+                   colour=z),             # attribute color
+               size=4) +                  # make all points larger
+    col_scale(name = "Tmax (degF)") +     # attach color scale
+    labs(colour="Tmax (degF)") +          # change legend label
+    geom_path(data=map_data("world"),     # add world map
+          aes(x=long,y=lat,group=group)) +
+    coord_fixed(xlim=c(-105,-75),ylim=c(25,50))  + theme_bw()# zoom in
+#ggplotly(NOAA_plot2)
+
+SSTplot2 <- ggplot(filter(SST,month %in% 1:6 & year == 1989)) +
+    geom_tile(aes(lon,lat,fill=anom)) + fill_scale(name = "degC") +
+    facet_wrap(~date) + xlab("Longitude (deg)") + ylab("Latitude (deg)") +
+    coord_fixed() + theme_bw()
+ggsave(SSTplot2,file="img/Chapter_2/SST6.png",width=8,height=3,dpi=300)
+
+### Hovmoller LON
+lon_axis <- unique(SST$lon)
+lim_t <- range(SST$t)
+lon_t_grid <- expand.grid(lon = lon_axis,
+                          t = t_axis)
+mean_na <- function(x) mean(x,na.rm=TRUE)
+SST_lon_Hov <- filter(SST,abs(lat) <= 1) %>%
+    group_by(t,lon) %>%
+    dplyr::summarise(z = mean(anom,na.rm=TRUE),
+              year=year[1],
+              month=month[1]) %>%
+    filter(year > 1995) %>%
+    arrange(t)
+
+#SST_lon_Hov$date <- as.Date(paste0("1-",SST_lon_Hov$date),format="%d-%m-%Y")
+t_breaks <- unique(SST_lon_Hov$t[which(SST_lon_Hov$month == 1)])
+year_breaks <- unique(SST_lon_Hov$year[which(SST_lon_Hov$month == 1)])
+SST_lon_Hov_plot <- ggplot(SST_lon_Hov) +
+    geom_tile(aes(x=lon,
+                  y=t,
+                  fill = pmin(pmax(z,-3),3))) +
+    fill_scale(name = "degC")  + labs(fill="degC") +
+    xlab("Longitude (deg)") + ylab("Year") +
+    scale_y_continuous(breaks=t_breaks,labels = year_breaks,trans="reverse") +
+    xlim(c(min(SST$lon),max(SST$lon)-8)) + theme_bw()
+
+### Hovmoller LAT
+lat_axis <- unique(SST$lat)
+lat_t_grid <- expand.grid(lat = lat_axis,
+                          t = t_axis)
+SST_lat_Hov <- filter(SST,lon <= 220 & lon >= 200) %>%
+    group_by(t,lat) %>%
+    dplyr::summarise(z = mean(anom,na.rm=TRUE),
+              year=year[1],
+              month=month[1]) %>%
+    filter(year > 1995) %>%
+    arrange(t)
+
+SST_lat_Hov_plot <- ggplot(SST_lat_Hov) +
+    geom_tile(aes(x=lat,
+                  y=t,
+                  fill = pmin(pmax(z,-3),3))) +
+    fill_scale(name = "degC") + ylab("Year start") + labs(fill="degC") +
+    xlab("Latitude (deg)") + ylab("Year") +
+    scale_y_continuous(breaks=t_breaks,labels = year_breaks,trans="reverse") + theme_bw()
+
+SST_Hovmoller <- arrangeGrob(SST_lon_Hov_plot,SST_lat_Hov_plot,nrow=1)
+ggsave(SST_Hovmoller,file="img/Chapter_2/SST_Hovmoller.png",width=8,height=4.5,dpi=300)
+@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% PLOTS FOR BBS DATA %%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+<<echo=FALSE,warning=FALSE>>=
+BBS <- NULL
+for(year in 66:99) {
+    BBS1 <- read.table(paste0("data/BBS_Finch_1966_1999/bbsfinch",year,".txt"))
+    colnames(BBS1) <- c("lon","lat","count")
+    BBS1 <- mutate(BBS1,year=year)
+    BBS <- rbind(BBS,BBS1)
+}
+
+BBS$year <- BBS$year + 1900
+g <- ggplot(filter(BBS,year %in% 1980:1999))+
+    geom_point(aes(x=lon,y=lat,size=count,colour=count,alpha=count)) +
+    facet_wrap(~year,nrow = 3) +
+    xlab("Longitude (deg)") + ylab("Latitude (deg)") +
+    scale_colour_distiller(palette = "Spectral")  + theme_bw() +
+    scale_x_continuous(breaks = c(-90,-75))
+
+ggsave(g,file="img/Chapter_2/BBSplot.png",width=6.6,height=3.3,dpi=300)
+@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% PLOTS FOR PCA DATA %%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+<<echo=FALSE,warning=FALSE>>=
+set.seed(1)
+C <- matrix(c(81,50,50,49),2,2)
+W <- eigen(C)$vectors
+L <- t(chol(C))
+samp <- L %*% matrix(rnorm(1000),nrow=2)
+x1mu <- 165
+x2mu <- 65
+df <- data.frame(i=1:500) %>%
+    mutate(x1=samp[1,]+x1mu,
+           x2=samp[2,]+x2mu,
+           a1=-0.8077*x1 -0.5896*x2,
+           a2=0.5896*x1 - 0.8077*x2)
+
+g_orig <- ggplot(df) + geom_point(aes(x1,x2),size=0.5,alpha=0.6) +
+    theme_bw() + ylab("Weight (kg)") +
+    xlab("Height (cm)") + coord_fixed()
+g_proj <- ggplot(df) + geom_point(aes(a1,a2),size=0.5,alpha=0.6) +
+    theme_bw() + ylab(expression(a[2])) +
+    xlab(expression(a[1])) + coord_fixed()
+
+a1_cx = -0.8077*165 - 0.5896*65
+a2_cx = 0.5896*165 -0.8077*65
+Coeff <- matrix(c(-1.37,-1.7,0.73,-1.23),2,2)
+
+df2 <- data.frame(x1a = c(x1mu-5,x1mu+5),
+                  x1b = c(x1mu-20,x1mu+20)) %>%
+       mutate(x2a = Coeff[1,1]*x1a + Coeff[2,1]*a1_cx,
+              x2b = Coeff[1,2]*x1b + Coeff[2,2]*a2_cx)
+
+g_proj1 <- g_orig + geom_line(data=df2,aes(x=x1a,y=x2a),col='red',size=1.5) +
+         geom_line(data=df2,aes(x=x1b,y=x2b),col='red',size=1.5)
+
+## Some rotation games...
+ang = 20/360*2*pi
+Rot <- matrix(c(cos(ang),sin(ang),-sin(ang),cos(ang)),2,2)
+
+mu_mat <- matrix(c(rep(x1mu,2),rep(x2mu,2)),2,2)
+Coords_rot1 <- as.data.frame(t(Rot %*% t(df2[,c(1,3)] - mu_mat)) + mu_mat)
+Coords_rot2 <- as.data.frame(t(Rot %*% t(df2[,c(2,4)] - mu_mat)) + mu_mat)
+colnames(Coords_rot1) <- c("x1a","x2a")
+colnames(Coords_rot2) <- c("x1b","x2b")
+
+g_proj2 <- g_orig + geom_line(data=Coords_rot1,aes(x=x1a,y=x2a),col='green',size=1.5) +
+         geom_line(data=Coords_rot2,aes(x=x1b,y=x2b),col='green',size=1.5)
+
+ggsave("img/Chapter_2/PCA1.png",grid.arrange(g_orig,g_proj2,g_proj1,nrow=1),
+       width=8.5,height=2.3,dpi=300)
+ggsave("img/Chapter_2/PCA2.png",g_proj,width=6,height=2.5,dpi=300)
+@
+
+\ifstandalone
+\bibliography{LitReviewBib,LitReviewR}
+\fi
+
+
+\end{document}

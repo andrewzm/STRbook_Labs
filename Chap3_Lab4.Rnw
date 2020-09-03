@@ -1,0 +1,260 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap3_Lab4}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\addcontentsline{toc}{section}{Lab 3.4: Generalized Linear Spatio-Temporal Regression}
+\section*{Lab 3.4: Generalized Linear Spatio-Temporal Regression}
+\markright{LAB 3.4: GENERALIZED LINEAR SPATIO-TEMPORAL REGRESSION}
+
+In this Lab we fit a generalized linear spatio-temporal model to yearly counts of Carolina wren in and around the state of Missouri between 1994 and 2014. \ifstandalone\else These counts are part of the BBS data set. \fi We need {\bf gstat}, {\bf sp}, and {\bf spacetime} for fitting an empirical sem\-ivario\-gram to the residuals, {\bf FRK} to construct the basis functions (as in Lab 3.2), {\bf ape} for running Moran's $I$ test, and the usual packages for wrangling and plotting.
+
+<<message=FALSE,results='hide',warning=FALSE>>=
+library("ape")
+library("dplyr")
+library("FRK")
+library("ggplot2")
+library("gstat")
+library("sp")
+library("spacetime")
+library("STRbook")
+library("tidyr")
+@
+
+\subsection*{Fitting the Model}
+
+The Carolina wren counts in the BBS data set, in both wide and long format, are supplied with {\bf STRbook}. Here we load the data directly in long format and remove any records that contain missing observations.
+
+<<>>=
+data("MOcarolinawren_long", package = "STRbook")
+MOcarolinawren_long <- MOcarolinawren_long %>%
+                       filter(!is.na(cnt))
+@
+
+\noindent We use the same covariates to fit these data as we did to fit the maximum temperature, \cc{Tmax}, in Lab 3.2. Twelve of these covariates were basis functions constructed using \fn{auto\_basis} from the package {\bf FRK}; see Lab 3.2 for details. The matrix \cc{S} below then contains the basis functions evaluated at the Carolina wren observation locations.
+
+<<>>=
+G <- auto_basis(data = MOcarolinawren_long[,c("lon","lat")] %>%
+                       SpatialPoints(),           # To sp obj
+                nres = 1,                         # One resolution
+                type = "Gaussian")                # Gaussian BFs
+
+S <- eval_basis(basis = G,                       # basis functions
+                s = MOcarolinawren_long[,c("lon","lat")] %>%
+                     as.matrix()) %>%            # conv. to matrix
+     as.matrix()                                 # conv. to matrix
+colnames(S) <- paste0("B", 1:ncol(S)) # assign column names
+@
+
+Next, we attach the basis-function covariate information to the data frame containing the counts, and remove the fields \cc{loc.ID} and \cc{t}, which we will not explicitly use when fitting the model. We list the first five columns of the first three records of our constructed data frame \cc{Wren\_df} as follows.
+
+<<>>=
+Wren_df <- cbind(MOcarolinawren_long,S) %>%
+  select(-loc.ID, -t)
+Wren_df[1:3, 1:5]
+@
+
+Generalized linear models (GLMs) are fitted in \cc{R} using the function \fn{glm}. The function works similarly to \fn{lm}, but in addition it requires one to specify the exponential-family model that is used (in this first instance we consider the Poisson family), as well as the link function (here we use the log function, which is the canonical link). The \fn{glm} function is called as follows (note that we have used the same formula as in Lab 3.2).
+
+<<>>=
+Wren_GLM <- glm(cnt ~ (lon + lat + year)^2 + ., # formula
+                family = poisson("log"),     # Poisson + log link
+                data = Wren_df)              # data set
+@
+
+The mean and variance of a random variable that has a Poisson distribution are the same.
+In cases where the variance in the data is greater than that suggested by this model, the data are said to exhibit ``over-dispersion.''  An estimate of the dispersion is given by the ratio of the deviance to the total degrees of freedom (the number of data points minus the number of covariates). In this case the dispersion estimate is
+
+<<echo = FALSE>>=
+options(digits = 3)
+@
+
+<<>>=
+Wren_GLM$deviance / Wren_GLM$df.residual
+@
+\noindent which is greater than 1, a sign of over-dispersion.
+
+<<echo=FALSE>>=
+Wren_GLM_QP <- glm(cnt ~ (lon + lat + year)^2 + ., # formula
+                family = quasipoisson("log"),        # Poisson + log link
+                data = Wren_df)                 # data set
+@
+
+Another way to obtain an estimate of the disperson parameter (and, to account for it if present) is to replace \fn{poisson} with \fn{quasipoisson} when calling \fn{glm}, and then type \fn{summary}\cc{(Wren\_GLM)}. The quasi-Poisson model assumes that the variance is proportional to the mean, and that the constant of the proportionality is the over-dispersion para\-meter. Note from the output of \fn{summary} that the dispersion parameter is \num{3.9}, which is close to what we estimated above.
+
+It can be shown that under the null hypothesis of no over-dispersion, the deviance is approximately chi-squared distributed with degrees of freedom equal to $m - p - 1$.
+<<>>=
+Wren_GLM$df.residual
+@
+\noindent The observed deviance is
+<<>>=
+Wren_GLM$deviance
+@
+\noindent The probability of observing such a large or larger deviance under the null hypothesis of no over-dispersion (i.e., the $p$-value) is
+<<>>=
+1 - pchisq(q = Wren_GLM$deviance, df = Wren_GLM$df.residual)
+@
+\noindent Therefore, we reject the null hypothesis of no over-dispersion at the usual levels of sig\-ni\-fic\-ance (10\%, 5\%, and 1\%). One may use other models in the exponential family, such as the negative-binomial distribution, to account explicitly for the over-dispersion. For convenience, in this Lab we proceed with the Poisson family. \ifstandalone\else We use the negative-binomial distribution in Lab 4.4.\fi
+
+\subsection*{Prediction}
+
+As in the other Labs, prediction proceeds through use of the function \fn{predict}. We first generate our space-time prediction grid, which is an 80 $\times$ 80 $\times$ 21 grid in degrees $\times$ degrees $\times$ years, covering the observations in space and in time.
+
+<<>>=
+pred_grid <- expand.grid(lon = seq(
+                             min(MOcarolinawren_long$lon) - 0.2,
+                             max(MOcarolinawren_long$lon) + 0.2,
+                             length.out = 80),
+                         lat = seq(
+                             min(MOcarolinawren_long$lat) - 0.2,
+                             max(MOcarolinawren_long$lat) + 0.2,
+                             length.out = 80),
+                         year = 1994:2014)
+@
+
+\noindent As in Lab 3.2, we now evaluate the basis functions at the prediction locations.
+
+<<>>=
+S_pred <- eval_basis(basis = G,                    # basis functs
+                s = pred_grid[,c("lon","lat")] %>% # pred locs
+                     as.matrix()) %>%            # conv. to matrix
+     as.matrix()                                 # as matrix
+colnames(S_pred) <- paste0("B", 1:ncol(S_pred))  # assign  names
+pred_grid <- cbind(pred_grid,S_pred)             # attach to grid
+@
+
+In the call to \fn{predict} below, we specify \args{type}\cc{ = }\strn{"link"} to indicate that we predict the link function of the response and not the response (analogous to the log-intensity of the process).
+
+<<>>=
+wren_preds <- predict(Wren_GLM,
+                      newdata = pred_grid,
+                      type = "link",
+                      se.fit = TRUE)
+@
+
+\noindent The predictions and prediction standard errors of the link function of the response are then attached to our prediction grid for plotting\ifstandalone\else; see Figure~\ref{fig:GLMfit_Wren}\fi. Plotting \ifstandalone \else to obtain Figure~\ref{fig:GLMfit_Wren} \fi is left as an exercise for the reader.
+
+<<>>=
+pred_grid <- pred_grid %>%
+             mutate(log_cnt = wren_preds$fit,
+                    se = wren_preds$se.fit)
+@
+
+<<echo = FALSE, fig.keep = 'none', results = 'hide'>>=
+g1 <- ggplot() + geom_raster(data=pred_grid,
+                             aes(lon, lat, fill = pmax(pmin(log_cnt,4),0))) +
+  facet_wrap(~year,nrow=3,ncol=7) +
+    geom_point(data = filter(MOcarolinawren_long, !is.na(cnt)),
+               aes(lon, lat),colour="black", size=3) +
+    geom_point(data=filter(MOcarolinawren_long,!is.na(cnt)),aes(lon,lat,colour=log(cnt)),size=2) +
+    scale_colour_distiller(palette="Spectral",limits=c(0,4)) +
+    scale_fill_distiller(palette="Spectral",limits=c(0,4),name=expression(log(Y[t]))) + theme_bw()
+
+g2 <- ggplot() + geom_raster(data=pred_grid,aes(lon,lat,fill=se)) +
+  facet_wrap(~year,nrow=3,ncol=7) +
+    scale_fill_distiller(palette="BrBG",limits=c(0,1),name=expression(s.e.)) + theme_bw()
+
+ggsave(g1, file="./img/Chapter_3/GLMfit_Wren.png",height=6,width=12)
+ggsave(g2, file="./img/Chapter_3/GLMse_Wren.png",height=6,width=12)
+
+@
+
+When fitting GLMs, it is good practice to check the deviance residuals and inspect them for any residual correlation. The default GLM residuals returned by \fn{residuals} are deviance residuals.
+
+<<>>=
+Wren_df$residuals <- residuals(Wren_GLM)
+@
+
+\noindent Interestingly, the plot of the deviance residuals in Figure \ref{fig:GLMresiduals_Wren} is ``noisy,'' indicating a lack of spatial correlation.
+
+<<>>=
+g2 <- ggplot(Wren_df) +
+    geom_point(aes(lon, lat, colour = residuals)) +
+    col_scale(name = "residuals") +
+    facet_wrap(~year, nrow = 3) + theme_bw()
+@
+
+<<echo = FALSE>>=
+ggsave(g2, file="./img/Chapter_3/GLMresiduals_Wren.png",height=6,width=12)
+@
+
+\begin{figure}[t!]
+	\begin{center}
+		\includegraphics[width=\textwidth]{img/Chapter_3/GLMresiduals_Wren.png}
+	\end{center}
+	\caption{The deviance residuals from the fitted GLM between $t=1$ (the year 1994) and $t=21$ (2014). \label{fig:GLMresiduals_Wren}}
+\end{figure}
+
+\noindent We can test for spatial correlation of the deviance residuals by running Moran's $I$ test on the spatial deviance residuals for each year. The code below follows closely that for Moran's $I$ test in Lab 3.2 and then summarizes the $p$-values obtained for each year.
+
+<<>>=
+P <- list()                                 # init list
+years <- 1994:2014
+for(i in seq_along(years)) {                # for each day
+  Wren_year <- filter(Wren_df,
+                     year == years[i])      # filter by year
+  obs_dists <- Wren_year %>%                # take the data
+    select(lon,lat) %>%                     # extract coords.
+    dist() %>%                              # comp. dists.
+    as.matrix()                             # conv. to matrix
+  obs_dists.inv <- 1/obs_dists              # weight matrix
+  diag(obs_dists.inv) <- 0                  # 0 on diag
+  P[[i]] <- Moran.I(Wren_year$residuals,    # run Moran's I
+                    obs_dists.inv) %>%
+            do.call("cbind", .)             # conv. to df
+}
+do.call("rbind",P) %>% summary(digits = 2)
+@
+
+\noindent Hence, at the 5\% level of significance, the null hypothesis (of no spatial correlation in these deviance residuals) is not rejected. This was expected from the visualization in Figure~\ref{fig:GLMresiduals_Wren}.
+
+More insight can be obtained by looking at the empirical semivariogram of the deviance residuals. To do this we first construct an \cc{STIDF}, thereby casting the irregular space-time data into a {\bf spacetime} object.
+
+<<warning=FALSE>>=
+Wren_STIDF <- STIDF(sp = SpatialPoints(
+                            Wren_df[,c("lon","lat")],
+                            proj4string = CRS("+proj=longlat")),
+                    time = as.Date(Wren_df[, "year"] %>%
+                                       as.character(),
+                                   format = "%Y"),
+                    data = Wren_df)
+@
+
+\noindent Then we compute the empirical semivariogram using \fn{variogram}. We consider time bins of width 1 year (i.e., of width 52.1429 weeks). Bins specified in units of weeks are required, as this is the largest temporal unit recognized by \fn{variogram} .
+
+<<cache = TRUE, results = 'hide', message = FALSE>>=
+tlags <- seq(0.01, 52.1429*6 + 0.01, by = 52.1429)
+vv <- variogram(object = residuals ~ 1, # fixed effect component
+                data = Wren_STIDF,      # data set
+                tlags = tlags,          # temp. bins
+                width = 25,             # spatial bin (25 km)
+                cutoff = 150,           # use pts < 150 km apart
+                tunit = "weeks")        # time unit
+@
+
+\noindent The empirical semivariogram can be plotted using \fn{plot}\cc{(vv)}. Notice how there is little evidence of spatial correlation but ample evidence of temporal correlation in the residuals. (The variance of the differences over a large range of time lags at the same spatial location is small.) This is a clear sign that a more sophisticated spatio-temporal random-effects model should be considered for these data.
+
+<<echo = FALSE, message = FALSE, results = 'hide', fig.keep = 'none'>>=
+png("img/Chapter_3/STvar_residuals_Wren.png",width=1300,height=1300,res=300);
+plot(vv, main="Empirical semivariogram",
+     xlab = "Distance (km)",
+     ylab = "Time lag (weeks)", xlim = c(0,150))
+dev.off()
+@
+
+<<eval = FALSE, echo = FALSE>>=
+Wren_df <- mutate(Wren_df, rnlon = round(lon*2)/2, rnlat = round(lat*2)/2)
+Wren_df_summ <- Wren_df %>% group_by(rnlon,rnlat,year) %>% summarise(meanresid = mean(residuals))
+ggplot(Wren_df_summ) + geom_point(aes(year, meanresid)) + facet_grid(rnlat ~ rnlon)
+@
+
+\end{document}

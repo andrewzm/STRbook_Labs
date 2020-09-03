@@ -1,0 +1,415 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap4_Lab3B}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\ifstandalone
+\section*{Lab 5.2: Non-Gaussian Spatio-Temporal Models with INLA}
+\else
+\addcontentsline{toc}{section}{Lab 4.5: Non-Gaussian Spatio-Temporal Models with {\bf INLA}}
+\section*{Lab 4.5: Non-Gaussian Spatio-Temporal Models with {\bf INLA}}
+\markright{Lab 4.5: Non-Gaussian Spatio-Temporal Models with {\bf INLA}}
+\fi
+
+Integrated Nested Laplace Approximation (INLA) is a Bayesian method that provides approximate marginal (posterior) distributions over all states and parameters. The package {\bf INLA} allows for a variety of modeling approaches, and the reader is referred to the book by \cite{blangiardo2015spatial}\index[aut]{Blangiardo, M.}\index[aut]{Cameletti, M.} for an extensive treatment. Other useful resources are \cite{R_INLA}\index[aut]{Lindgren, F.}\index[aut]{Rue, H.} and \cite{krainski2018}\index[aut]{Krainski, E.~T.}\index[aut]{G\'omez-Rubio, V.}\index[aut]{Bakka, H.}\index[aut]{Lenzi, A.}\index[aut]{Castro-Camilo, D.}\index[aut]{Simpson, D.}\index[aut]{Lindgren, F.}\index[aut]{Rue, H.}.
+
+In this Lab we shall predict expected counts at arbitrary space-time locations from the vector of observed  counts $\bZ$. The data we use are the Carolina wren counts in the BBS data set described in \ifstandalone Lab 4.3. \else Section \ref{sec:STdata}. \fi For this Lab, we require the package {\bf INLA} as well as {\bf  dplyr, tidyr, ggplot2} and {\bf  STRbook}.
+
+<<message=FALSE,results='hide',warning=FALSE>>=
+library("INLA")
+library("dplyr")
+library("tidyr")
+library("ggplot2")
+library("STRbook")
+data("MOcarolinawren_long", package = "STRbook")
+@
+
+Consider the data model,
+\begin{equation}
+\bZ_t | \bY_t \; \sim \; indep. \; NB(\bY_t, r), \label{eq:INLAmodel1}
+\end{equation}
+and the process model,
+\begin{equation}
+\log(\bY_t) =  \bX_t \bfbeta + \bfPhi_t \bfalpha_t. \label{eq:INLAmodel2}
+\end{equation}
+In \eqref{eq:INLAmodel1} and \eqref{eq:INLAmodel2}, $\bZ_t$ is an $m_t$-dimensional data vector of counts at $m_t$ spatial locations, $E(\bZ_t | \bY_t) = \bY_t$, $\bY_t$ represents the latent spatio-temporal mean process at $m_t$ locations, $\bfPhi_t$ is an $m_t \times n_\alpha$ matrix of spatial basis functions, $r$ is the size parameter, and the associated random coefficients are modeled as $\bfalpha_t \; \sim \; Gau({\mbf 0},\bC_\alpha)$.
+
+In order to fit this hierarchical model, we need to generate the basis functions with which to construct the matrices $\{\bfPhi_t: t = 1,\dots,T\}$. In {\bf INLA}, the basis functions used are typ\-ic\-ally ``tent'' (finite element) functions constructed over a triangulation of the domain. To establish a ``boundary'' for the domain, we can use the function \fn{inla.nonconvex.hull}, as follows.
+
+<<results = 'hide', message= FALSE>>=
+coords <- unique(MOcarolinawren_long[c("loc.ID", "lon", "lat")])
+boundary <- inla.nonconvex.hull(as.matrix(coords[, 2:3]))
+@
+
+The triangulation of the domain is then carried out using the function \fn{inla.mesh.2d}. This function takes several arguments (see its help file for details). Two of the most im\-port\-ant arguments are \args{max.edge} and \args{cutoff}. When the former is supplied with a vector of length $2$, the first element is the maximum edge length in the interior of the domain, and the second element is the maximum edge length in the  exterior of the domain (obtained from a small buffer that is automatically created to reduce boundary effects). The second argument, \args{cutoff}, establishes the minimum edge length. Below we choose a maximum edge length of \num{0.8} in the domain interior. This is probably too large for the problem at hand, but reducing this considerably increases the computational burden when fitting the model.
+
+<<>>=
+MOmesh <- inla.mesh.2d(boundary = boundary,
+                       max.edge = c(0.8, 1.2), # max. edge length
+                       cutoff = 0.1)           # min. edge length
+@
+
+<<echo=FALSE,results='hide',message=FALSE,fig.keep='none'>>=
+png('./img/Chapter_4/mesh.png',width=2500,height=1800,res = 400)
+par(mgp=c(2.2,0.45,0), tcl=-0.4, mar=c(0,0,0,0))
+plot(MOmesh,asp=1,main="");
+lines(coords[c("lon","lat")],col="red",type="p")
+dev.off()
+@
+
+\noindent The mesh and the data locations are plotted using the following commands.
+<<eval = FALSE>>=
+plot(MOmesh, asp = 1, main = "")
+lines(coords[c("lon", "lat")], col = "red", type = "p")
+@
+\noindent These are shown in Figure~\ref{fig:mesh}. Note that the triangulation is irregular and contains an extension with triangles that are larger than those in the interior of the domain.
+
+\begin{figure}[t!]
+\begin{center}
+\includegraphics[width=0.6\textwidth,angle=0]{img/Chapter_4/mesh.png}
+\end{center}
+\caption{Triangulation for the Carolina wren data locations over which the ``tent'' functions are constructed (black), and the observation locations (red circles) are superimposed. The blue line denotes the interior non-convex domain of interest that includes all the data points.}
+\label{fig:mesh}
+\end{figure}
+
+
+As in the standard Gaussian case, the modeling effort lies in establishing the covariance matrix of $\bfalpha \equiv (\bfalpha_1',\dots,\bfalpha_T')'$.  When using {\bf INLA}, typically the covariance matrix of $\bfalpha$ is chosen to be separable and of the form $\bfSigma_t(\rho) \otimes \bfSigma_s(\tau,\kappa,\nu)$ in such a way that its inverse (i.e., the precision matrix) is sparse. The matrix $\bfSigma_t$ is constructed assuming an AR(1) process, and thus it is parameterized using a single AR parameter, $\rho$. This parameter dictates the correlation of $\bfalpha$ across time; the closer $\rho$ is to 1, the higher the temporal correlation. The matrix $\bfSigma_s$ is parameterized using three parameters, and it reflects the spatial covariance required such that the reconstructed field is, approximately, a solution to the stochastic partial differential equation (SPDE)
+\begin{equation*}
+%\cov(Y(\bs_i;t_i),Y(\bs_j;t_i)) \approx \frac{\sigma^2}{2^{\nu - 1}\Gamma(\nu)}(\kappa \|\bs_i - \bs_j\|)^\nuK_\nu(\kappa \|\bs_i - \bs_j\|),\label{eq:Matern}
+(\kappa^2 - \Delta)^{\alpha/2}(\tau Y(\cdot)) = \epsilon(\cdot),
+\end{equation*}
+where $\Delta$ is the Laplacian, $\epsilon(\cdot)$ is a white-noise process, and $\tau$ controls the variance. The resulting field has a Mat{\'e}rn covariance function\index{covariance function}. The parameter $\kappa$ is a scaling parameter that translates to a ``practical'' spatial correlation length (i.e., the spatial separation at which the correlation is 0.1) $l = (\sqrt{8\nu})/\kappa$, while $\alpha = \nu + d/2$ is a smoothness parameter and $d$ is the spatial dimension. Here we fix $\nu = 1$ ($\alpha = 2$); this parameter is notoriously difficult to estimate and frequently set using cross-validation. Note that there are other ``practical'' length scales used to characterize the range of a correlation function (e.g., ``effective range'' when the correlation is 0.05); our choice here is motivated by the {\bf INLA} package that readily provides a marginal distribution over the parameter $l$ as defined here.
+
+The SPDE can be constructed on the mesh using the function \fn{inla.spde2.pcmatern}. The \cc{pc} in \cc{pcmatern} is short for ``penalized complexity,'' and it is used to refer to prior distributions over the hyperparameters that are both interpretable and that have interesting theoretical properties \citep{simpson2017penalising}\index[aut]{Simpson, D.}\index[aut]{Rue, H.}\index[aut]{Riebler, A.}\index[aut]{Martins, T.~G.}\index[aut]{Sorbye, S.~H.@S{\o}rbye, S.~H.}. We define prior distributions below over the range parameter $l$ such that $P(l < 1) = 0.01$, and over the marginal standard deviation such that $P(\sigma > 4) = 0.01$. We elicited these distributions by looking at the count data -- it is highly unlikely that the spatial correlation length is less than 1 degree and that the expected counts are of the order of 50 or more (we will use a log link, and $e^4 \approx 55$).
+
+<<inla-setup>>=
+spde <- inla.spde2.pcmatern(mesh = MOmesh,
+                            alpha = 2,
+                            prior.range = c(1, 0.01),
+                            prior.sigma = c(4, 0.01))
+@
+
+
+With the discretization shown in Figure~\ref{fig:mesh}, $\alpha_{t,i}$ can be viewed as the weight of the $i$th basis function at time $t$. The observation matrix $\bfPhi_t$ then maps the observations to the finite-element space at time $t$; if the observation lies exactly on a vertex, then the associated row in $\bfPhi_t$ will be 0 everywhere except for a 1 in the column corresponding to the vertex. Otherwise, the row has three non-zero elements, with each representing the proportion being assigned to each vertex. For point predictions or areal averages, all rows in $\bfPhi_t$ sum to 1. Finally, for this example, we choose each element in $\bX_t$ to be equal to 1. The coefficient $\beta_0$ is then the intercept.
+
+
+% For simplicity, we choose the triangulation vertices as prediction locations: The matrix $\bH_t^*$ is then simply the identity matrix.
+The package {\bf INLA} requires space and time to be ``blocked up'' with an ordering of the variables in which space runs faster than time (i.e., the first few variables are spatial nodes at the first time point, the next few are at the second time point, and so on). Hence we have the block-matrix structure
+\begin{equation} \label{eq:INLA-blocking}
+\log\left(\begin{bmatrix} \bY_1 \\ \vdots \\ \bY_T \end{bmatrix}\right) = \begin{bmatrix} \bX_1 \\ \vdots \\ \bX_T \end{bmatrix}\bfbeta + \begin{bmatrix} \bfPhi_1 & \bfzero & \dots \\ \vdots & \ddots & \vdots \\ \bfzero & \dots & \bfPhi_T \end{bmatrix} \begin{bmatrix} \bfalpha_1 \\ \vdots \\ \bfalpha_T \end{bmatrix},
+\end{equation}
+\noindent where $\log(\cdot)$ corresponds to a vector of elementwise logarithms. This can be further simplified to
+\begin{equation} \label{eq:INLA-blocking2}
+\log(\bY) = \bX\bfbeta + \bfPhi\bfalpha,
+\end{equation}
+\noindent where $\bY = (\bY_1',\dots,\bY_T')'$, $\bX = (\bX_1',\dots,\bX_T')'$, $\bfPhi \equiv \bdiag(\{\bfPhi_t : t = 1,\dots,T\})$, $\bdiag(\cdot)$ constructs a block-diagonal matrix from its arguments, and $\bfalpha \equiv (\bfalpha_1',\dots,\bfalpha_T')'$.
+
+A space-time index needs to be constructed for this representation. This index is a double index that identifies both the spatial location and the associated time point. In Lab 2.2 we saw how the function \fn{expand.grid} can be used to generate such indices from a set of spatial locations and time points. In {\bf INLA}, we instead use the function  \fn{inla.spde.make.index}. It takes as arguments the index name, the number of spatial points in the mesh, and the number of time points.
+
+<<>>=
+n_years <- length(unique(MOcarolinawren_long$t))
+n_spatial <- MOmesh$n
+s_index <- inla.spde.make.index(name = "spatial.field",
+                                n.spde = n_spatial,
+                                n.group = n_years)
+
+@
+
+\noindent The list \cc{s\_index} contains two important items, the \cc{spatial.field} index, which runs from 1 to \cc{n\_spatial} for \cc{n\_years} times, and \cc{spatial.field.group}, which runs from 1 to \cc{n\_years}, with each element replicated \cc{n\_spatial} times. Note how this is similar to what one would obtain from \fn{expand.grid}.
+
+The matrix $\bfPhi$ in \eqref{eq:INLA-blocking2} is found using the \fn{inla.spde.make.A} function. This function takes as arguments the mesh, the measurement locations \cc{loc}, the  measurement group (in our case the year of observation) and the number of groups.
+
+<<>>=
+coords.allyear <- MOcarolinawren_long[c("lon", "lat")] %>%
+                  as.matrix()
+PHI <- inla.spde.make.A(mesh = MOmesh,
+                        loc = coords.allyear,
+                        group = MOcarolinawren_long$t,
+                        n.group = n_years)
+@
+
+\noindent Note that
+<<>>=
+dim(PHI)
+@
+\noindent This is a matrix equal in dimension to (number of observations) $\times$ (number of indices) of our basis functions in space and time.
+
+<<>>=
+nrow(MOcarolinawren_long)
+length(s_index$spatial.field)
+@
+
+The latent Gaussian model is constructed in {\bf INLA} through a \emph{stack}. Stacks are handy as they allow one to define data, effects, and observation matrices in groups (e.g., one accounting for the measurement locations and another accounting for the prediction locations), which can then be stacked together into one bigger stack.  In order to build a stack we need to further block up \eqref{eq:INLA-blocking} into a representation amenable to the \fn{inla} function (called later on) as follows:
+\begin{equation*} %\label{eq:INLA-blocking3}
+\log(\bY) = \bfPi\bfgamma,
+\end{equation*}
+where $\bfPi = (\bfPhi, \bfone)$ and $\bfgamma = (\bfalpha',\beta_0)'$.
+
+A stack containing the data and covariates at the measurement locations is constructed by supplying the data (argument \args{data}), the matrix $\bfPi$ (argument \args{A}), and information on the vector $\bfgamma$. The stack is then tagged with the label \strn{"est"}.
+
+<<results='hide',message=FALSE>>=
+## First stack: Estimation
+n_data <- nrow(MOcarolinawren_long)
+stack_est <- inla.stack(
+                 data = list(cnt = MOcarolinawren_long$cnt),
+                 A = list(PHI, 1),
+                 effects = list(s_index,
+                                list(Intercept = rep(1, n_data))),
+                 tag = "est")
+@
+
+We next construct a stack containing the matrices and vectors defining the model at the prediction locations. In this case, we choose the triangulation vertices as the prediction locations; then $\bfPhi$ is simply the identity matrix, and $\bX$ is a vector of ones. We store the information on the prediction locations in \cc{df\_pred} and that for $\bfPhi$ in \cc{PHI\_pred}.
+
+<<>>=
+df_pred <- data.frame(lon = rep(MOmesh$loc[,1], n_years),
+                      lat = rep(MOmesh$loc[,2], n_years),
+                      t = rep(1:n_years, each = MOmesh$n))
+n_pred <- nrow(df_pred)
+PHI_pred <- Diagonal(n = n_pred)
+@
+
+The prediction stack is constructed in a very similar way to the estimation stack, but this time we set the data values to \num{NA} to indicate that prediction should be carried out at these locations.
+
+<<>>=
+## Second stack: Prediction
+stack_pred <- inla.stack(
+                 data = list(cnt = NA),
+                 A = list(PHI_pred, 1),
+                 effects = list(s_index,
+                                list(Intercept = rep(1, n_pred))),
+                 tag = "pred")
+@
+
+The estimation stack and prediction stack are combined using the \fn{inla.stack} function.
+
+<<>>=
+stack <- inla.stack(stack_est, stack_pred)
+@
+
+\noindent All \fn{inla.stack} does is block-concatenate the matrices and vectors in the individual stacks. Denote the log-expected counts at the prediction locations as $\bY^*$, the covariates as $\bX^*$, and the basis functions evaluated at the prediction locations as $\bfPhi^*$. Then
+
+\begin{equation*} %\label{eq:INLA-blocking4}
+\begin{bmatrix} \log(\bY)  \\ \log(\bY^*) \end{bmatrix} = \begin{bmatrix} \bfPi \\ \bfPi^* \end{bmatrix}   \bfgamma,
+\end{equation*}
+\noindent recalling that $\bfgamma = (\bfalpha',\beta_0)'$. Note that, internally, some columns of $\bfPi$ and $\bfPi^*$ corresponding to unobserved states are not stored. For example $\bfPhi$, internally, has dimension
+
+<<>>=
+dim(stack_est$A)
+@
+
+\noindent The number of rows corresponds to the number of data points, while the number of columns corresponds to the number of observed states (\fn{sum}\cc{(}\fn{colSums}\cc{(PHI) > }\num{0}\cc{)}) plus one for the intercept term.
+
+All that remains before fitting the model is for us to define the formula, which is a combination of a standard \cc{R} formula for the fixed effects and an {\bf INLA} formula for the spatio-temporal residual component. For the latter, we need to specify the name of the index we created as the first argument (in this case \cc{spatial.field}), the model (in this case \cc{spde}), the  name of the grouping/time index (in this case \cc{spatial.field.group}) and, finally, the model to be constructed across groups (in this case an AR(1) model). The latter modeling choice implies that $E(\bfalpha_{t+1}\mid \bfalpha_t) = \rho \bfalpha_t$, $t = 1,\dots,T-1$. Our choice for the prior on the AR(1) coefficient, $\rho$, is a penalized complexity prior, such that $P(\rho > 0) = 0.9$ to reflect the prior belief that we highly doubt a negative temporal correlation.
+
+<<>>=
+## PC prior on rho
+rho_hyper <- list(theta=list(prior = 'pccor1',
+                             param = c(0, 0.9)))
+
+## Formula
+formula <- cnt ~ -1 + Intercept +
+                 f(spatial.field,
+                   model = spde,
+                   group = spatial.field.group,
+                   control.group = list(model = "ar1",
+                                        hyper = rho_hyper))
+@
+
+Now we have everything in place to run the main function for fitting the model, \fn{inla}. This needs the data from the stack (extracted through \fn{inla.stack.data}) and the exponential family (in this case negative-binomial). The remaining options indicate the desired outputs. In the command given below, we instruct \fn{inla} to fit the model and also to compute the predictions at the required locations.
+
+<<run-inla,eval=FALSE,results="hide",message=FALSE>>=
+output <- inla(formula,
+               data = inla.stack.data(stack, spde = spde),
+               family = "nbinomial",
+               control.predictor = list(A = inla.stack.A(stack),
+                                        compute = TRUE))
+@
+
+
+<<echo=FALSE>>=
+output2 <- list(summary.fixed = output$summary.fixed,
+                summary.hyperpar = output$summary.hyperpar,
+                summary.fitted.values = output$summary.fitted.values,
+                marginals.fixed = output$marginals.fixed,
+                marginals.hyperpar = output$marginals.hyperpar,
+                internal.marginals.hyperpar = output$internal.marginals.hyperpar,
+                marginals.spde2.blc = output$marginals.spde2.blc,
+                marginals.spde3.blc = output$marginals.spde3.blc,
+                internal.marginals.hyperpar = output$internal.marginals.hyperpar)
+class(output2) <- "inla"
+output <- output2
+save(output,file="data/INLA_output.rda")
+@
+
+\noindent This operation takes a long time. In {\bf STRbook} we provide the important components of this object, which can be loaded through
+
+<<load-inla>>=
+data("INLA_output", package = "STRbook")
+@
+
+INLA provides approximate marginal posterior distributions for each $\bfalpha_t$ in $\bfalpha$ and $\{\bfbeta,\rho,\tau\,\kappa\}$. The returned object, \cc{output}, contains all the results as well as summaries of these results for quick analysis. From the posterior distributions over the precision para\-meter $\tau$ and scale parameter $\kappa$, we can readily obtain marginal posterior distributions over the more interpretable variance parameter $\sigma^2$ and practical range parameter $l$. Posterior distributions of some of the parameters are shown in Figure \ref{fig:inla-pars}, where we can see that the AR(1) coefficient of the latent field, $\rho$, is large (most of the mass of the posterior distribution is close to $1$), and the practical range parameter, $l$, is of the order of 2 degrees ($\approx 200$\,km). The posterior distribution of the marginal variance of the latent field is largest between 2 and 4, These values suggest that there are strong spatial and temporal dependencies in the data. We give code below for plotting the posterior marginal distributions shown in Figure \ref{fig:inla-pars}.
+
+
+ \begin{figure}[ht!]
+ \begin{center}
+\includegraphics[width=0.9\textwidth,angle=0]{img/Chapter_4/INLA_posteriors.png}
+ \end{center}
+ \caption{Marginal posterior distributions of $\beta_0$, the temporal correlation $\rho$, the variance $\sigma^2$, and the range parameter $l$.\label{fig:inla-pars}}
+ \end{figure}
+
+<<echo=FALSE, results="hide",fig.keep='none'>>=
+png('./img/Chapter_4/INLA_posteriors.png',width=2500,height=1800,res = 400)
+par(mgp=c(2.2,0.45,0), tcl=-0.4, mar=c(3.3,4,2,2))
+par(mfrow=c(2,2))
+output.field <- inla.spde2.result(inla = output,
+                                  name = "spatial.field",
+                                  spde = spde,
+                                  do.transf = TRUE)
+plot(output$marginals.fix[[1]],type ='l',xlab=expression(beta[0]),ylab=expression(p(beta[0]*"|"*Z)))
+plot(output$marginals.hyperpar[[4]],type = 'l',xlab = expression(rho),ylab = expression(p(rho*"|"*Z)))
+plot(output.field$marginals.variance.nominal[[1]],type = 'l',xlab = expression(sigma^2),ylab = expression(p(sigma^2*"|"*Z)))
+plot(output.field$marginals.range.nominal[[1]],type = 'l',xlab = expression(l),ylab = expression(p(l*"|"*Z)))
+dev.off()
+## Inference results on beta, rho, variance, and range parameters
+round(output$summary.fixed,3)
+round(output$summary.hyperpar,3)
+@
+
+<<echo=TRUE,results="hide",message=FALSE,fig.keep='none'>>=
+output.field <- inla.spde2.result(inla = output,
+                                  name = "spatial.field",
+                                  spde = spde,
+                                  do.transf = TRUE)
+## plot p(beta0 | Z)
+plot(output$marginals.fix$Intercept,
+     type = 'l',
+     xlab = expression(beta[0]),
+     ylab = expression(p(beta[0]*"|"*Z)))
+
+## plot p(rho | Z)
+plot(output$marginals.hyperpar$`GroupRho for spatial.field`,
+     type = 'l',
+     xlab = expression(rho),
+     ylab = expression(p(rho*"|"*Z)))
+
+## plot p(sigma^2 | Z)
+plot(output.field$marginals.variance.nominal[[1]],
+     type = 'l',
+     xlab = expression(sigma^2),
+     ylab = expression(p(sigma^2*"|"*Z)))
+
+## plot p(range | Z)
+plot(output.field$marginals.range.nominal[[1]],
+     type = 'l',
+     xlab = expression(l),
+     ylab = expression(p(l*"|"*Z)))
+@
+
+We provide the prediction (posterior mean) and prediction standard error (posterior standard deviation) for $\log(Y(\cdot))$ in Figures \ref{fig:inla-pred} and \ref{fig:inla-se}, respectively. These figures were generated by linearly interpolating the posterior mean and posterior standard deviation of $\log(\bY^*)$ on a fine grid. Note how a high observed count at a certain location in one year affects the predictions at the same location in neighboring years, even if unobserved.
+
+ \begin{figure}[h!]
+ \begin{center}
+\includegraphics[width=0.9\textwidth,angle=0]{img/Chapter_4/INLA_predictions}
+ \end{center}
+ \caption{Posterior mean of $\log(Y(\cdot))$ on a grid for $t=1$ (the year 1994) to $t=21$ (the year 2014), based on a negative-binomial data model using the package {\bf INLA}. The log of the observed count is shown in circles using the same color scale.}
+ \label{fig:inla-pred}
+ \end{figure}
+
+  \begin{figure} [h!]
+ \begin{center}
+\includegraphics[width=0.9\textwidth,angle=0]{img/Chapter_4/INLA_sd}
+ \end{center}
+ \caption{Posterior standard deviation (i.e., prediction standard error) of $\log(Y(\cdot))$ on a grid for $t=1$ (the year 1994) to $t=21$ (the year 2014), based on a negative-binomial data model using the package {\bf INLA}.}
+ \label{fig:inla-se}
+ \end{figure}
+ 
+ Plotting spatial fields, such as those shown in Figures \ref{fig:inla-pred} and \ref{fig:inla-se}, from the {\bf INLA} output can be a bit involved since each prediction and prediction standard error of $\bfalpha_t$ for each $t$ needs to be projected spatially. First, we extract the predictions and prediction stand\-ard errors of $\bfalpha = (\bfalpha_1',\dots,\bfalpha_T')'$ as follows.
+
+ <<warning=FALSE>>=
+index_pred <- inla.stack.index(stack, "pred")$data
+lp_mean <- output$summary.fitted.values$mean[index_pred]
+lp_sd <- output$summary.fitted.values$sd[index_pred]
+@
+
+Next, we need to create a spatial grid upon which we map the predictions and their associated prediction standard errors. This can be constructed using the function \fn{expand.grid}. We construct an 80 $\times$ 80 grid below.
+
+<<warning=FALSE>>=
+grid_locs <- expand.grid(
+                 lon = seq(min(MOcarolinawren_long$lon) - 0.2,
+                           max(MOcarolinawren_long$lon) + 0.2,
+                           length.out = 80),
+                 lat = seq(min(MOcarolinawren_long$lat) - 0.2,
+                           max(MOcarolinawren_long$lat) + 0.2,
+                           length.out = 80))
+@
+
+The function \fn{inla.mesh.projector} provides all the information required, based on the created spatial grid, to carry out the mapping.
+
+<<warning=FALSE>>=
+proj.grid <- inla.mesh.projector(MOmesh,
+                    xlim = c(min(MOcarolinawren_long$lon) - 0.2,
+                             max(MOcarolinawren_long$lon) + 0.2),
+                    ylim = c(min(MOcarolinawren_long$lat) - 0.2,
+                             max(MOcarolinawren_long$lat) + 0.2),
+                    dims = c(80, 80))
+@
+
+Now we have everything in place to map each $\bfalpha_t$ on our spatial grid. We iterate through $t$, and for each $t = 1,\dots,T$ we map both the prediction and prediction standard errors of $\bfalpha_t$ on the spatial grid as follows.
+
+<<warning=FALSE>>=
+pred <- sd <-  NULL
+for(i in 1:n_years) {
+    ii <- (i-1)*MOmesh$n + 1
+    jj <- i*MOmesh$n
+    pred[[i]] <- cbind(grid_locs,
+                       z = c(inla.mesh.project(proj.grid,
+                                             lp_mean[ii:jj])),
+                       t = i)
+    sd[[i]] <- cbind(grid_locs,
+                     z = c(inla.mesh.project(proj.grid,
+                                             lp_sd[ii:jj])),
+                     t = i)
+}
+@
+
+The last thing we need to do is compile all the data (which are in lists) into one data frame for plotting with {\bf ggplot2}. We concatenate all the list elements rowwise and remove those elements that are \num{NA} because they fall outside of the support of any basis function.
+
+<<warning=FALSE>>=
+pred <- do.call("rbind", pred) %>% filter(!is.na(z))
+sd <- do.call("rbind", sd) %>% filter(!is.na(z))
+@
+
+The data frames \cc{pred} and \cc{sd} now contain the spatio-temporal predictions and spatio-temporal prediction standard errors. Plotting of these fields using {\bf ggplot2} is left as an exercise for the reader.
+
+<<echo=FALSE,fig.height=6,fig.width=10,warning=FALSE>>=
+df_tot <- group_by(MOcarolinawren_long,lon,lat) %>%
+          dplyr::summarise(tot_cnt = sum(cnt,na.rm=T))
+
+g1 <- ggplot() + geom_raster(data=pred,aes(lon,lat,fill=pmin(z,5))) + facet_wrap(~t,nrow=3,ncol=7) +
+    geom_point(data=filter(MOcarolinawren_long,!is.na(cnt)),aes(lon,lat),colour="black",size=3) +
+    geom_point(data=filter(MOcarolinawren_long,!is.na(cnt)),aes(lon,lat,colour=log(cnt)),size=2) +
+    scale_colour_distiller(palette="Spectral",limits=c(-1,5)) +
+    scale_fill_distiller(palette="Spectral",limits=c(-1,5),name=expression(log(Y[t]))) + theme_bw()
+
+g2 <- ggplot() + geom_raster(data=sd,aes(lon,lat,fill=z)) + facet_wrap(~t,nrow=3,ncol=7) +
+    scale_fill_distiller(palette="BrBG",limits=c(0,2.5),name=expression(s.e.)) + theme_bw()
+
+ggsave(g1, file="./img/Chapter_4/INLA_predictions.png",height=6,width=12)
+ggsave(g2, file="./img/Chapter_4/INLA_sd.png",height=6,width=12)
+@
+
+
+\ifstandalone
+\bibliography{LitReviewBib,LitReviewR}
+\fi
+
+\end{document}

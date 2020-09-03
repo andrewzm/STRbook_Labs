@@ -1,0 +1,457 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap2_Lab3}}}
+{\standalonetrue}
+{\standalonefalse}
+
+\begin{document}
+
+<<echo=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+@
+
+\addcontentsline{toc}{section}{Lab 2.3: Exploratory Data Analysis}
+\section*{Lab 2.3: Exploratory Data Analysis}
+\markright{Lab 2.3: Exploratory Data Analysis}
+
+In this Lab we carry out exploratory data analysis (EDA), which typically requires visualization techniques similar to those utilized in Lab 2.2. There are several ways in which to carry out EDA with spatio-temporal data; in this Lab we consider the construction and visualization of the empirical means and covariances, the use of empirical orthogonal functions and their associated principal component time series, semivariogram analysis, and spatio-temporal canonical correlation analysis.
+
+For the first part of the Lab, as in Lab 2.2, we shall consider the daily maximum temperatures in the NOAA data set between May 1993 and September 1993 (inclusive). The packages we need are {\bf CCA, dplyr, ggplot2, gstat, sp, spacetime, STRbook} and {\bf tidyr}.
+
+<<results='hide',message=FALSE, warning=FALSE>>=
+library("CCA")
+library("dplyr")
+library("ggplot2")
+library("gstat")
+library("sp")
+library("spacetime")
+library("STRbook")
+library("tidyr")
+@
+
+<<echo=FALSE,message=FALSE,results='hide'>>=
+library("grid")
+library("gridExtra")
+@
+\noindent In order to ensure consistency of results and visualizations, we fix the seed to 1.
+
+<<>>=
+set.seed(1)
+@
+
+We now load the NOAA data set using the \fn{data} command. To keep the data size manageable, we take a subset of it corresponding to the maximum daily temperatures in the months May--September 1993. As in Lab 2.2 we also add a new variable \cc{t} which starts at 1 at the beginning of the data set and increases by 1 each day.
+
+<<message=FALSE, warning=FALSE>>=
+data("NOAA_df_1990", package = "STRbook")
+Tmax <- filter(NOAA_df_1990,     # subset the data
+              proc == "Tmax" &   # only max temperature
+              month %in% 5:9 &   # May to September
+              year == 1993)      # year of 1993
+Tmax$t <- Tmax$julian - 728049   # create a new time variable
+@
+
+\subsection*{Empirical Spatial Means}
+
+The empirical spatial mean of our data is given by \ifstandalone \begin{equation}
+\widehat{\mbv \mu}_z \equiv  \left[\begin{array}{c} \widehat{\mu}_z(\bs_1) \\ \vdots \\ \widehat{\mu}_z(\bs_m) \end{array} \right] \equiv
+ \frac{1}{T}\sum_{j=1}^T\bz_{t_j},
+\label{eq:Zmean}
+\end{equation}
+where $\bz_{t_j} \equiv (z(\bs_1;t_j),\ldots,z(\bs_m;t_j))'$.
+\else \eqref{eq:Zmean}. \fi The empirical spatial mean is a spatial quantity that can be stored in a new data frame that contains the spatial locations and the respective average maximum temperature at each location. These, and other data manipulations to follow, can be carried out easily using the tools we learned in Lab 2.1. We group by longitude and latitude, and then we compute the average maximum temperature at each of the separate longitude--latitude coordinates.
+
+<<message=FALSE>>=
+spat_av <- group_by(Tmax, lat, lon) %>%    # group by lon-lat
+           summarise(mu_emp = mean(z))     # mean for each lon-lat
+@
+
+We can now plot the average maximum temperature per station and see how this varies according to longitude and latitude. \ifstandalone Use \fn{print} to display the following plots. \else The following plots are shown in Figure~\ref{fig:NOAA_spat_means}.\fi
+
+<<>>=
+lat_means <- ggplot(spat_av) +
+             geom_point(aes(lat, mu_emp)) +
+             xlab("Latitude (deg)") +
+             ylab("Maximum temperature (degF)") + theme_bw()
+
+lon_means <- ggplot(spat_av) +
+             geom_point(aes(lon, mu_emp)) +
+             xlab("Longitude (deg)") +
+             ylab("Maximum temperature (degF)") + theme_bw()
+@
+
+<<echo=FALSE>>=
+NOAA_spat_means <- arrangeGrob(lon_means, lat_means, nrow=1)
+ggsave(NOAA_spat_means,file="img/Chapter_2/NOAA_spat_means.png",width=6.5,height=3,dpi=300)
+@
+
+\subsection*{Empirical Temporal Means}
+
+\ifstandalone \else We now generate the plot of Figure~\ref{fig:NOAA_av}. \fi The empirical temporal mean  can be computed easily using the tools we learned in Lab 2.1: first, group the data by time; and second, summarize using the \fn{summarise} function.
+
+<<>>=
+Tmax_av <- group_by(Tmax, date) %>%
+           summarise(meanTmax = mean(z))
+@
+
+The variable \texttt{Tmax\_av} is a data frame containing the average maximum temperature on each day (averaged across all the stations). This can be visualized easily, together with the original raw data, using {\bf ggplot2}.
+
+<<warning=FALSE>>=
+gTmaxav <-
+    ggplot() +
+    geom_line(data = Tmax,aes(x = date, y = z, group = id),
+              colour = "blue", alpha = 0.04) +
+    geom_line(data = Tmax_av, aes(x = date, y = meanTmax)) +
+    xlab("Month") + ylab("Maximum temperature (degF)") +
+    theme_bw()
+@
+
+<<echo=FALSE,warning=FALSE>>=
+ggsave("img/Chapter_2/NOAA_av.png",gTmaxav,width=7.5,height=3.5,dpi=300)
+@
+
+\subsection*{Empirical Covariances}
+
+Before obtaining the empirical covariances, it is important that all trends are removed (not just the intercept). One simple way to do this is to first fit a linear model (that has spatial and/or temporal covariates) to the data. Then plot the empirical covariances of the detrended data (i.e., the residuals). Linear-model fitting proceeds with use of the \fn{lm} function in \R. The residuals from \fn{lm} can then be incorporated into the original data frame \cc{Tmax}.
+
+\ifstandalone In the above visualizations  \else In the plots of Figure~\ref{fig:TmaxTS} \fi we observed a quadratic tendency of temperature over the chosen time span. Therefore, in what follows, we consider time and time squared as covariates. Note the use of the function \fn{I}. This is required for \cc{R} to interpret the power sign ``\cc{\^}'' as an arithmetic operator instead of a formula operator.
+
+<<>>=
+lm1 <- lm(z ~ lat + t + I(t^2), data = Tmax) # fit a linear model
+Tmax$residuals <- residuals(lm1)             # store the residuals
+@
+
+\noindent We also need to consider the spatial locations of the stations, which we extract from \cc{Tmax} used above.
+
+<<>>=
+spat_df <- filter(Tmax, t == 1) %>% # lon/lat coords of stations
+            select(lon, lat)  %>%   # select lon/lat only
+            arrange(lon, lat)       # sort ascending by lon/lat
+m <- nrow(spat_av)                  # number of stations
+@
+
+The most straightforward way to compute the empirical covariance matrix \ifstandalone \begin{equation} \label{eq:emp_cov}
+\widehat{\bC}_z^{(\tau)} \equiv \frac{1}{T - \tau}\sum_{j= \tau + 1}^T(\bz_{t_j} - \widehat\bfmu_z)(\bz_{t_j-\tau} - \widehat\bfmu_z)';\quad \tau = 0,1,\dots,T-1,
+\end{equation}
+\else \eqref{eq:emp_cov} \fi is using the \fn{cov} function in \R. When there are missing data, the usual way forward is to drop all records that are not complete (provided there are not too many of these). Specifically, if any of the elements in  $\bZ_{t_j}$ or $\bZ_{t_j - \tau}$ are missing, the associated term in the summation of \eqref{eq:emp_cov} is ignored altogether. The function \fn{cov} implements this when the argument \args{use} = \strn{\textquotesingle complete.obs\textquotesingle} is supplied. If there are too many records that are incomplete, imputation, or the consideration of only subsets of stations, might be required.
+
+
+In order to compute the empirical covariance matrices, we first need to put the data into space-wide format using \fn{spread}.
+
+<<>>=
+X <- select(Tmax, lon, lat, residuals, t) %>% # select columns
+     spread(t, residuals) %>%                 # make time-wide
+     select(-lon, -lat) %>%                   # drop coord info
+     t()                                      # make space-wide
+@
+
+Now it is simply a matter of calling \fn{cov}\cc{(X}, \args{use} = \strn{\textquotesingle complete.obs\textquotesingle}\cc{)} for computing the lag-0 empirical covariance matrix. For the lag-1 empirical covariance matrix we compute the covariance between the residuals from \cc{X} excluding the first time point and \cc{X} excluding the last time point.
+
+<<>>=
+Lag0_cov <- cov(X, use = 'complete.obs')
+Lag1_cov <- cov(X[-1, ], X[-nrow(X),], use = 'complete.obs')
+@
+
+In practice, it is very hard to gain any intuition from these matrices, since points in a two-dimensional space do not have any specific ordering. One can, for example, order the stations by longitude and then plot the permuted spatial covariance matrix, but this works best when the domain of interest is rectangular with a longitude span that is much larger than the latitude span. In our case, with a roughly square domain, a workaround is to split the domain into either latitudinal or longitudinal strips, and then plot the spatial covariance matrix associated with each strip. In the following, we split the domain into four longitudinal strips (similar code can be used to generate latitudinal strips).
+
+<<>>=
+spat_df$n <- 1:nrow(spat_df)    # assign an index to each station
+lim_lon <- range(spat_df$lon)   # range of lon coordinates
+lon_strips <- seq(lim_lon[1],   # create 4 long. strip boundaries
+                  lim_lon[2],
+                  length = 5)
+spat_df$lon_strip <- cut(spat_df$lon,     # bin the lon into
+                         lon_strips,      # their respective bins
+                         labels = FALSE,  # don't assign labels
+                         include.lowest = TRUE) # include edges
+@
+
+\noindent The first six records of \cc{spat\_df} are:
+
+<<>>=
+head(spat_df)   # print the first 6 records of spat_df
+@
+
+Now that we know in which strip each station falls, we can subset the station data frame by strip and then sort the subsetted data frame by latitude. In {\bf STRbook} we provide a function \fn{plot\_cov\_strips} that takes an empirical covariance matrix \cc{C} and a data frame in the same format as \cc{spat\_df}, and then plots the covariance matrix associated with each longitudinal strip. Plotting requires the package {\bf fields}. We can plot the resulting lag-0 and lag-1 covariance matrices using the following code.
+
+
+<<message=FALSE,eval=FALSE>>=
+plot_cov_strips(Lag0_cov, spat_df)  # plot the lag-0 matrices
+plot_cov_strips(Lag1_cov, spat_df)  # plot the lag-1 matrices
+@
+
+<<echo=FALSE,message=FALSE,results='hide',fig.keep='none'>>=
+library(fields)   # load fields for plotting
+png("img/Chapter_2/LagCovplots.png",width=3600,height=2400,res=300)
+## prepare a 2x4 plot layout
+par(mfrow=c(2,4),mar=c(6.1,5.1,6.1,5.1),cex.lab=2,cex.axis=2)
+plot_cov_strips(Lag0_cov,spat_df)  # plot the lag-0 matrices
+plot_cov_strips(Lag1_cov,spat_df)  # plot the lag-1 matrices
+dev.off()
+@
+
+As expected \ifstandalone (from the figures), \else (see Figure \ref{fig:emp_cov_plots}), \fi the empirical spatial covariance matrices reveal the presence of spatial correlation in the residuals. The four lag-0 plots seem to be qualitatively similar, suggesting that there is no strong dependence on longitude. However, there is a dependence on latitude, and the spatial covariance appears to decrease with decreasing latitude. This dependence is a type of spatial \emph{non-stationarity}, and such plots can be used to assess whether non-stationary spatio-temporal models are required or not.
+
+Similar code can be used to generate spatial correlation (instead of covariance) image plots.
+
+\subsection*{Semivariogram Analysis}
+
+From now on, in order to simplify computations, we will use a subset of the data containing only observations in July. Computing the empirical semivariogram is much faster when using objects of class \cc{STFDF} rather than \cc{STIDF} since the regular space-time structure can be exploited. We hence take \cc{STObj3} computed in Lab 2.1 (load using \fn{data}\cc{(STObj3)}) and subset the month of July 1993 as follows.
+
+
+<<>>=
+data("STObj3", package = "STRbook")
+STObj4 <- STObj3[, "1993-07-01::1993-07-31"]
+@
+
+
+\noindent For computing the sample semivariogram we use the function \fn{variogram}.\footnote{Although the function is named ``variogram,'' it is in fact the sample semivariogram that is computed.} We bin the distances between measurement locations into bins of size 60\,km, and consider at most six time lags.
+
+<<variogram-est,eval=TRUE,results='hide'>>=
+vv <- variogram(object = z~1 + lat, # fixed effect component
+                data = STObj4,      # July data
+                width = 80,         # spatial bin (80 km)
+                cutoff = 1000,      # consider pts < 1000 km apart
+                tlags = 0.01:6.01)  # 0 days to 6 days
+@
+
+
+<<results='hide',message=FALSE,echo=FALSE,fig.keep='none'>>=
+png("img/Chapter_2/STvar.png",width=1300,height=1300,res=300);
+plot(vv,main="Empirical semivariogram",xlab="Distance (km)",ylab="Time lag (days)");
+dev.off()
+@
+
+\noindent The command \fn{plot}\cc{(vv)} \ifstandalone displays the empirical semivariogram. \else produces Figure \ref{fig:var_cov}. \fi The plot suggests that there are considerable spatio-temporal correlations in the data; spatio-temporal modeling of the residuals is thus warranted.
+
+
+\subsection*{Empirical Orthogonal Functions}
+
+Empirical orthogonal functions (EOFs) can reveal spatial structure in the data and can also be used for subsequent dimensionality reduction. EOFs can be obtained from the data through either a spectral decomposition of the covariance matrix or a singular value decomposition (SVD) of the detrended space-time data matrix. The data matrix has to be in space-wide format (i.e., where space varies along the columns and time varies along the rows).
+
+\ifstandalone
+ In this Lab we consider the approach using SVD.  Let $\bZ \equiv (\bz_1,\ldots,\bz_T)^\prime$ be the $T \times m$ data matrix and then let $\widetilde{\bZ}$ be the ``detrended'' and scaled data matrix,
+\begin{equation}\label{eq:scaledZ}
+\widetilde{\bZ} \equiv \frac{1}{\sqrt{T-1}}(\bZ - \bfone_T \widehat{\bfmu}_z^\prime),
+\end{equation}
+where $\bfone_T$ is a $T$-dimensional vector of ones and $\widehat{\bfmu}_z$ is the spatial mean vector given by (\ref{eq:Zmean}). Now, consider the SVD of the detrended and scaled data matrix,
+\begin{equation}
+\widetilde{\bZ} = \bU \bD \bV',
+\label{eq:SVD}
+\end{equation}
+where $\bU$ is the $T \times T$ matrix of left singular vectors, $\bD$ is a $T \times m$ matrix containing singular values on the main diagonal, and $\bV$ is an $m \times m$ matrix containing the right singular vectors, where both $\bU$ and $\bV$ are orthonormal matrices.  It can be shown (details omitted) that $\bV$ contains the EOFs and the eigenvalues are $\bfLambda = \bD' \bD$. In addition, it is straightforward to show that the first $m$ columns of $\bU (\sqrt{T-1})$ correspond to the normalized PC time series.
+\fi
+
+For this part of the Lab we use the SST data set. The SST data set does not contain any missing values, which renders our task slightly easier than when data are missing. When data are missing, one typically needs to consider interpolation,  median polishing, or other imputation methods to fill in the missing values prior to computing the EOFs.
+
+First we load the sea-land mask, the lon-lat coordinates of the SST grid, and the SST data set itself which is in time-wide format.
+
+<<>>=
+data("SSTlandmask", package = "STRbook")
+data("SSTlonlat", package = "STRbook")
+data("SSTdata", package = "STRbook")
+@
+
+\noindent Since \cc{SSTdata} contains readings over land,\footnote{The land SST data are ``pseudo-data,'' and just there to help analysts re-grid the SST data to different resolutions.} we delete these using \cc{SSTlandmask}. Further, in order to consider whole years only, we take the first 396 months (33 years) of the data, containing SST values spanning 1970--2002.
+
+<<>>=
+delete_rows <- which(SSTlandmask == 1)
+SSTdata <- SSTdata[-delete_rows, 1:396]
+@
+
+\noindent From \eqref{eq:scaledZ} recall that prior to carrying out an SVD, we need to put the data set into space-wide format, mean-correct it, and then standardize it. Since \cc{SSTdata} is in time-wide format, we first transpose it to make it space-wide.
+
+<<>>=
+## Put data into space-wide form
+Z <- t(SSTdata)
+dim(Z)
+@
+
+\noindent Note that \cc{Z} is of size 396 $\times$ 2261, and it is hence in space-wide format as required. Equation \eqref{eq:scaledZ} is implemented as follows.
+
+<<>>=
+## First find the matrix we need to subtract:
+spat_mean <- apply(SSTdata, 1, mean)
+nT <- ncol(SSTdata)
+
+## Then subtract and standardize:
+Zspat_detrend <- Z - outer(rep(1, nT), spat_mean)
+Zt <- 1/sqrt(nT - 1)*Zspat_detrend
+@
+
+\noindent Finally, to carry out the SVD we run
+
+<<>>=
+E <- svd(Zt)
+@
+
+The SVD returns a list \cc{E} containing the matrices $\bV$, $\bU$, and the singular values $\diag(\bD)$. The matrix $\bV$ contains the EOFs in space-wide format. We change the column names of this matrix, and append the lon-lat coordinates to it as follows.
+
+<<>>=
+V <- E$v
+colnames(E$v) <- paste0("EOF", 1:ncol(SSTdata)) # label columns
+EOFs <- cbind(SSTlonlat[-delete_rows, ], E$v)
+head(EOFs[, 1:6])
+@
+
+The matrix $\bU$ returned from $\fn{svd}$ contains the principal component time series in wide-table format (i.e., each column corresponds to a time series associated with an EOF). Here we use the function \fn{gather} in the package {\bf tidyr} that reverses the operation \fn{spread}. That is, the function takes a spatio-temporal data set in wide-table format and puts it into long-table format. We instruct the function to gather every column except the column denoting time, and we assign the key--value pair \cc{EOF}-\cc{PC}:
+
+<<>>=
+TS <- data.frame(E$u) %>%            # convert U to data frame
+      mutate(t = 1:nrow(E$u)) %>%    # add a time field
+      gather(EOF, PC, -t)            # put columns (except time)
+                                     # into long-table format with
+                                     # EOF-PC as key-value pair
+@
+
+
+\noindent Finally, the normalized time series are given by:
+<<>>=
+TS$nPC <- TS$PC * sqrt(nT-1)
+@
+
+We now can use the visualization tools discussed earlier to visualize the EOFs and the (normalized) principal component time series during July 2003. \ifstandalone \else In Figures \ref{fig:EOFsA} and \ref{fig:EOFsB}, we show the first three EOFs and the first three principal component time series. \fi We can use the following code to illustrate the first EOF:
+
+<<eval=FALSE>>=
+ggplot(EOFs) + geom_tile(aes(x = lon, y = lat, fill = EOF1)) +
+    fill_scale(name = "degC") + theme_bw() +
+    xlab("Longitude (deg)") + ylab("Latitude (deg)")
+@
+
+<<echo = FALSE>>=
+save(E, TS, Zspat_detrend, spat_mean, file = 'data/SST_EOFs.rda')
+@
+
+
+
+Plotting of other EOFs and principal component time series is left as an excercise to the reader. The EOFs reveal interesting spatial structure in the residuals. The second EOF is a west--east gradient, while the third EOF again reveals a temporally dependent north--south gradient. This north--south gradient has a lower effect in the initial part of the time series, and a higher effect towards the end.
+
+<<echo=FALSE>>=
+landpixels <- cbind(data.frame(SSTlonlat[delete_rows,]),
+                    data.frame(matrix(NA,length(delete_rows),ncol(SSTdata))))
+colnames(landpixels) <- c("lon","lat",paste0("EOF",1:ncol(SSTdata)))
+
+EOFs <- rbind(EOFs,landpixels)
+EOF1 <- ggplot(EOFs) + geom_tile(aes(x=lon,y=lat,fill=EOF1),size=5) +
+    fill_scale(name = "degC") + theme_bw() + xlab("Longitude (deg)") + ylab("Latitude (deg)")
+EOF2 <- ggplot(EOFs) + geom_tile(aes(x=lon,y=lat,fill=EOF2),size=5) +
+    fill_scale(name = "degC") + theme_bw() + xlab("Longitude (deg)") + ylab("Latitude (deg)")
+EOF3 <- ggplot(EOFs) + geom_tile(aes(x=lon,y=lat,fill=EOF3),size=5) +
+    fill_scale(name = "degC") + theme_bw() + xlab("Longitude (deg)") + ylab("Latitude (deg)")
+EOF4 <- ggplot(EOFs) + geom_tile(aes(x=lon,y=lat,fill=EOF4),size=5) +
+    fill_scale(name = "degC") + theme_bw() + xlab("Longitude (deg)") + ylab("Latitude (deg)")
+
+t_breaks <- seq(1,nT,by = 60)
+year_breaks <- seq(1970,2002,by=5)
+
+year_scale <- scale_x_continuous(breaks=t_breaks,labels = year_breaks)
+PC1 <- ggplot(subset(TS,EOF=="X1")) + geom_line(aes(x=t,y=nPC)) +
+    xlab("Year")  + ylab("") + theme_bw() + year_scale
+PC2 <- ggplot(subset(TS,EOF=="X2")) + geom_line(aes(x=t,y=nPC)) +
+    xlab("Year")  + ylab("") + theme_bw() + year_scale
+PC3 <- ggplot(subset(TS,EOF=="X3")) + geom_line(aes(x=t,y=nPC)) +
+    xlab("Year")   + ylab("") + theme_bw() + year_scale
+PC4 <- ggplot(subset(TS,EOF=="X4")) + geom_line(aes(x=t,y=nPC)) +
+    xlab("Year")   + ylab("") + theme_bw() + year_scale
+@
+
+<<echo=FALSE>>=
+ggsave("img/Chapter_2/EOFsA.png",arrangeGrob(EOF1,PC1,EOF2,PC2,nrow=4),width=8,height=7.2)
+ggsave("img/Chapter_2/EOFsB.png",arrangeGrob(EOF3,PC3,EOF4,PC4,nrow=4),width=8,height=7.2)
+@
+
+
+EOFs can also be constructed by using \fn{eof} in the package {\bf spacetime}. With the latter, one must cast the data into an \cc{STFDF} object using the function \fn{stConstruct} before calling the function \fn{eof}. The last example in the help file of \fn{stConstruct} shows how one can do this from a space-wide matrix. The function \fn{eof} uses \fn{prcomp} (short for principal component analysis) to find the EOFs, which in turn uses \fn{svd}. %The EOFs obtained are visualized using \fn{spplot} in Figure \ref{fig:EOFs_spplot};  these EOFs are identical to those obtained using SVD above.
+
+%%%%% JUST TO CHECK WITH SP: (GET SAME ANSWERS)
+<<echo=FALSE,eval=FALSE>>=
+library(RColorBrewer)
+library(spacetime)
+SSTt <- t(SSTdata)
+colnames(SSTt) <- paste0("X",colnames(SSTt))
+spat_sp <- SSTlonlat[-delete_rows,] %>%
+           SpatialPoints(proj4string=CRS("+proj=longlat"))
+row.names(spat_sp) <- colnames(SSTt)
+months <- (1:nT - 1) %% 12 + 1
+years <- floor((1:nT - 0.001) /12 ) + 1970
+day_pts <- unique(ISOdate(years,months, rep(1,nT), 0))
+STObj2 <- stConstruct(SSTt,
+                      space= list(values = colnames(SSTt)),
+                      time=day_pts,
+                      SpatialObj = spat_sp,
+                      interval=TRUE)
+XX <- eof(STObj2)
+spplot(XX[1:3],layout=c(3,1),col.regions= (brewer.pal(11, "Spectral") %>%     # construct spectral brewer palette
+                       colorRampPalette())(16) %>%    # 16 levels
+                        rev() )
+@
+
+\subsection*{Spatio-Temporal Canonical Correlation Analysis} 
+
+We can carry out a canonical correlation analysis (CCA) using the package {\bf CCA} in \R. One cannot implement CCA on the raw data since $T < n$. Instead we carry out CCA on the SST projected onto EOF space, specifically the first 10 EOFs which explain just over 74\% of the variance of the signal (you can show this from the singular values in the object \cc{E}). In this example we consider the problem of long-lead prediction, and we check whether SST is a useful predictor for SST in 7 months' time. To this end, we split the data set into two parts, one containing SST and another containing SST lagged by 7 months.
+
+<<>>=
+nEOF <- 10
+EOFset1 <- E$u[1:(nT-7), 1:nEOF] * sqrt(nT - 1)
+EOFset2 <- E$u[8:nT, 1:nEOF] * sqrt(nT - 1)
+@
+
+<<echo=FALSE>>=
+#cumsum(E$d^2 / sum(E$d^2))
+@
+
+\noindent The CCA is carried out by running the function \fn{cancor}.
+
+<<>>=
+cc <- cancor(EOFset1, EOFset2)  # compute CCA
+options(digits = 3)             # print to three d.p.
+print(cc$cor[1:5])              # print
+print(cc$cor[6:10])
+@
+
+The returned quantity \cc{cc\$cor} provides the correlations between the canonical variates of the unshifted and shifted SSTs in EOF space. The correlations decrease, as expected, but the first two canonical variates are highly correlated. The time series of the first canonical variables can be found by multiplying the EOF weights with the computed coefficients as follows \ifstandalone \else (see \eqref{eq:CCA_a} and \eqref{eq:CCA_b}).\fi
+
+<<>>=
+CCA_df <- data.frame(t = 1:(nT - 7),
+                    CCAvar1 = (EOFset1 %*% cc$xcoef[,1])[,1],
+                    CCAvar2 = (EOFset2 %*% cc$ycoef[,1])[,1])
+@
+\noindent A plot can be made using standard {\bf ggplot2} commands.
+<<>>=
+t_breaks <- seq(1, nT, by = 60)     # breaks for x-labels
+year_breaks <- seq(1970,2002,by=5)  # labels for x-axis
+g <- ggplot(CCA_df) +
+     geom_line(aes(t, CCAvar1), col = "dark blue") +
+     geom_line(aes(t, CCAvar2), col = "dark red") +
+     scale_x_continuous(breaks = t_breaks, labels = year_breaks) +
+     ylab("CCA variables") + xlab("Year") + theme_bw()
+@
+
+<<echo=FALSE>>=
+ggsave(g,file="img/Chapter_2/CCA1.png",width=8,height=2.7,dpi=300)
+@
+
+\ifstandalone \else The plot of the time series of the first canonical variables is shown in Figure~\ref{fig:CCA1}. \fi The plot shows a high correlation between the first pair of canonical variables. What are these canonical variables? They are simply a linear combination of the EOFs, where the linear weights are given in \cc{cc\$xcoef[,1]} and \cc{cc\$ycoef[,1]}, respectively.
+
+<<>>=
+EOFs_CCA <- EOFs[,1:4] # first two columns are lon-lat
+EOFs_CCA[,3] <- c(as.matrix(EOFs[,3:12]) %*% cc$xcoef[,1])
+EOFs_CCA[,4] <- c(as.matrix(EOFs[,3:12]) %*% cc$ycoef[,1])
+@
+
+\noindent Plotting of the weights as spatial maps is straightforward and left as an exercise. \ifstandalone \else We plot weights (recall these are just linear combination of EOFs) for the lagged SSTs and the unlagged SSTs in Figure~\ref{fig:CCA2}.\fi
+
+<<echo=FALSE>>=
+EOF_CCA1 <- ggplot(EOFs_CCA) + geom_tile(aes(x=lon,y=lat,fill=EOF1),size=5) +
+    fill_scale(name = "degC") + xlab("Longitude (deg)") +
+    ylab("Latitude (deg)") + theme_bw()
+EOF_CCA2 <- ggplot(EOFs_CCA) + geom_tile(aes(x=lon,y=lat,fill=EOF2),size=5) +
+    fill_scale(name = "degC") + theme_bw() + xlab("Longitude (deg)") + ylab("Latitude (deg)")
+@
+
+<<echo=FALSE>>=
+ggsave(arrangeGrob(EOF_CCA1,EOF_CCA2,nrow=1),file="img/Chapter_2/CCA2.png",width=9,height=2.2,dpi=300)
+@
+
+\end{document}

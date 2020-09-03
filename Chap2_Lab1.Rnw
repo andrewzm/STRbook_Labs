@@ -1,0 +1,330 @@
+\documentclass[b5paper,11pt]{book}
+\input{preamble}
+
+\ifthenelse{\equal{\jobname}{\detokenize{Chap2_Lab1}}}
+{\standalonetrue}
+{\standalonefalse}
+
+
+\begin{document}
+
+<<echo=FALSE, purl=FALSE>>=
+opts_chunk$set(background = rgb(1,1,0.85),
+               size='small')
+options(width = 60)
+@
+
+\addcontentsline{toc}{section}{Lab 2.1: Data Wrangling}
+\section*{Lab 2.1: Data Wrangling}
+\markright{Lab 2.1: Data Wrangling}
+
+
+Spatio-temporal modeling and prediction generally involve substantial amounts of data that are available to the user in a variety of forms, but more often than not as tables in CSV files or text files. A considerable amount of time is usually spent in loading the data and pre-processing them in order to put them into a form that is suitable for analysis. Fortunately, there are several packages in {\R} that help the user achieve these goals quickly; here we focus on the packages {\bf dplyr} and {\bf tidyr}, which contain functions particularly suited for the data manipulation techniques that are required. We first load the required packages, as well as {\bf STRbook}  (visit \cc{https://spacetimewithr.org} for instructions on how to install {\bf STRbook}).
+
+<<message=FALSE,warning=FALSE,results='hide'>>=
+library("dplyr")
+library("tidyr")
+library("STRbook")
+@
+
+\ifstandalone
+As running example, we shall consider a data set from the National Oceanic and Atmospheric Administration (NOAA) that was provided to us as text in data tables available with the package {\bf STRbook}. There are six data tables:
+\else
+As running example we will consider the NOAA data set, which was provided to us as text in tables and is available with the package {\bf STRbook}. There are six data tables:
+\fi
+
+\begin{itemize}
+\item \texttt{Stationinfo.dat}. This table contains 328 rows (one for each station) and three columns (station ID, latitude coordinate, and longitude coordinate) containing information on the stations' locations.
+\item \texttt{Times\_1990.dat}. This table contains 1461 rows (one for each day between 01 January 1990 and 30 December 1993) and four columns (Julian date, year, month, day) containing the data time stamps.
+\item \texttt{Tmax\_1990.dat}. This table contains 1461 rows (one for each time point) and 328 columns (one for each station location) containing all maximum temperature data with missing values coded as $-9999$.
+\item \texttt{Tmin\_1990.dat}. Same as \texttt{Tmax\_1990.dat} but containing minimum temperature data.
+\item \texttt{TDP\_1990.dat}. Same as \texttt{Tmax\_1990.dat} but containing temperature dew point data  with missing values coded as $-999.90001$.
+\item \texttt{Precip\_1990.dat}. Same as \texttt{Tmax\_1990.dat} but containing precipitation data with missing values coded as $-99.989998$.
+\end{itemize}
+
+\noindent The first task is to reconcile all these data into one object. Before seeing how to use the spatio-temporal data classes to do this, we first consider the rather simpler task of reconciling them into a standard {\R} data frame in long format.
+
+\subsection*{Working with Spatio-Temporal Data in Long Format}
+
+The station locations, time stamps and maximum temperature data can be loaded into {\R} from {\bf STRbook} as follows.
+<<>>=
+locs <- read.table(system.file("extdata", "Stationinfo.dat",
+                               package = "STRbook"),
+                  col.names = c("id", "lat", "lon"))
+Times <- read.table(system.file("extdata", "Times_1990.dat",
+                                package = "STRbook"),
+                  col.names = c("julian", "year", "month", "day"))
+Tmax <- read.table(system.file("extdata", "Tmax_1990.dat",
+                               package = "STRbook"))
+@
+\noindent In this case, \fn{system.file} and its arguments are used to locate the data within the package {\bf STRbook}, while \fn{read.table} is the most important function used in \texttt{R} for reading data input from text files. By default, \fn{read.table} assumes that data items are separated by a blank space, but this can be changed using the argument \args{sep}. Other important data input functions worth looking up include \fn{read.csv} for comma-separated value files, and \fn{read.delim}.
+
+Above we have added the column names to the data \cc{locs} and \cc{Times} since these were not available with the original text tables. Since we did not assign column names to \texttt{Tmax}, the column names are the default ones assigned by \fn{read.table}, that is, \cc{V1, V2, \dots, V328}. As these do not relate to the station ID in any way, we rename these columns as appropriate using the data in \cc{locs}.
+
+<<>>=
+names(Tmax) <- locs$id
+@
+
+\noindent The other data can be loaded in a similar way to \texttt{Tmax}; we denote the resulting variables as \cc{Tmin}, \cc{TDP}, and \cc{Precip}, respectively. One can, and should, use the functions \fn{head} and \fn{tail} to check that the loaded data are sensible.
+
+<<echo=FALSE, purl=FALSE>>=
+Tmin <- read.table(system.file("extdata", "Tmax_1990.dat", package = "STRbook"))
+TDP <- read.table(system.file("extdata", "TDP_1990.dat", package = "STRbook"))
+Precip <- read.table(system.file("extdata", "Precip_1990.dat", package = "STRbook"))
+names(Tmin) <- locs$id
+names(TDP) <- locs$id
+names(Precip) <- locs$id
+@
+
+Consider now the maximum-temperature data in the NOAA data set. Since each row in \cc{Tmax} is associated with a time point, we can attach it columnwise to the data frame \cc{Times} using \fn{cbind}.
+
+<<>>=
+Tmax <- cbind(Times, Tmax)
+head(names(Tmax), 10)
+@
+
+\noindent Now \cc{Tmax} contains the time information in the first four columns and temperature data in the other columns. To put \cc{Tmax} into long format we need to identify a \emph{key--value} pair. In our case, the data are in space-wide format where the \emph{keys} are the station IDs and the \emph{values} are the maximum temperatures (which we store in a field named \cc{z}). The function we use to put the data frame into long format is \fn{gather}. This function takes the data as first argument, the key--value pair, and then the next arguments are the names of any columns to exclude as values (in this case those relating to the time stamp).
+
+<<>>=
+Tmax_long <- gather(Tmax, id, z, -julian, -year, -month, -day)
+head(Tmax_long)
+@
+
+\noindent Note how \fn{gather} has helped us achieve our goal: we now have a single row per measurement and multiple rows may be associated with the same time point. As is, the column \cc{id} is of class \cc{character} since it was extracted from the column names. Since the station ID is an integer it is more natural to ensure the field is of class \cc{integer}.
+
+<<>>=
+Tmax_long$id <- as.integer(Tmax_long$id)
+@
+
+There is little use to keep missing data (coded as $-9999$ in our case) when the data are in long format. To filter out these data we can use the function \fn{filter}. Frequently it is better to use an \emph{inequality} criterion (e.g., less than) when filtering in this way rather than an \emph{equivalence} criterion (is equal to) due to truncation error when storing data. This is what we do below, and filter out data with values less than $-9998$ rather than data with values equal to $-9999$. This is particularly important when processing the other variables, such as preciptation, where the missing value is $-99.989998$.
+
+<<warning=FALSE>>=
+nrow(Tmax_long)
+Tmax_long <- filter(Tmax_long, !(z <= -9998))
+nrow(Tmax_long)
+@
+
+\noindent Note how the number of rows in our data set (returned from the function \fn{nrow}) has now decreased by more than half. One may also use the {\R} function \fn{subset}; however, \fn{filter} tends to be faster for large data sets. Both \fn{subset} and \fn{filter} take a logical expression as instruction on how to filter out unwanted rows. As with \fn{gather}, the column names in the logical expression do not appear as strings. In \texttt{R} this method of providing arguments is known as \emph{non-standard evaluation}, and we shall see several instances of it in the course of the Labs.
+
+Now assume we wish to include minimum temperature and the other variables inside this data frame too. The first thing we need to do is first make sure every measurement \cc{z} is attributed to a process. In our case, we need to add a column, say \cc{proc}, indicating what process the measurement relates to. There are a few ways in which to add a column to a data frame; here we shall introduce the function \fn{mutate}, which will facilitate operations in the following Labs.
+
+<<>>=
+Tmax_long <- mutate(Tmax_long, proc = "Tmax")
+head(Tmax_long)
+@
+
+<<echo=FALSE, purl=FALSE>>=
+Tmin_long <- cbind(Times,Tmin) %>%
+             gather(id,z,-julian,-year,-month,-day) %>%
+             filter(!(z <= -9998)) %>%
+             mutate(proc = "Tmin")
+Tmin_long$id <- as.integer(Tmin_long$id)
+TDP_long <- cbind(Times,TDP) %>%
+             gather(id,z,-julian,-year,-month,-day) %>%
+             filter(!(z <= -900)) %>%
+             mutate(proc = "TDP")
+TDP_long$id <- as.integer(TDP_long$id)
+Precip_long <- cbind(Times,Precip) %>%
+             gather(id,z,-julian,-year,-month,-day) %>%
+             filter(!(z <= -90)) %>%
+             mutate(proc = "Precip")
+Precip_long$id <- as.integer(Precip_long$id)
+
+save(Tmin_long,file="./data/Tmin_long.rda")
+save(TDP_long,file="./data/TDP_long.rda")
+save(Precip_long,file="./data/Precip_long.rda")
+@
+
+\noindent Now repeat the same procedure with the other variables to obtain data frames \cc{Tmin\_long}, \cc{TDP\_long}, and \cc{Precip\_long} (remember the different codings for the missing values!). To save time, the resulting data frames can also be loaded directly from {\bf STRbook} as follows.
+
+<<>>=
+data(Tmin_long, package = "STRbook")
+data(TDP_long, package = "STRbook")
+data(Precip_long, package = "STRbook")
+@
+
+We can now construct our final data frame in long format by simply concatenating all these (rowwise) together using the function \fn{rbind}.
+
+<<>>=
+NOAA_df_1990 <- rbind(Tmax_long, Tmin_long, TDP_long, Precip_long)
+@
+
+
+There are many advantages of having data in long form. For example, it makes grouping and summarizing particularly easy. Let us say we want to find the mean value for each variable in each year. We do this using the functions \fn{group\_by} and \fn{summarise}. The function \fn{group\_by} creates a \emph{grouped data frame}, while \fn{summarise} does an operation \emph{on each group within the grouped data frame}.
+
+<<>>=
+summ <- group_by(NOAA_df_1990, year, proc) %>%  # groupings
+        summarise(mean_proc = mean(z))          # operation
+@
+
+\noindent Alternatively, we may wish to find out the number of days on which it did not rain at each station in June of every year. We can first filter out the other variables and then use \fn{summarise}.
+
+<<>>=
+NOAA_precip <- filter(NOAA_df_1990, proc == "Precip" & month == 6)
+summ <- group_by(NOAA_precip, year, id) %>%
+        summarise(days_no_precip = sum(z == 0))
+head(summ)
+@
+
+\noindent The median number of days with no recorded precipitation was
+
+<<>>=
+median(summ$days_no_precip)
+@
+
+In the \R~code above, we have used the operator \cc{\%$>$\%}, known as the \emph{pipe} operator. This operator has its own nuances and should be used with care, but we find it provides a clear desciption of the processing pipeline a data set is passed through. We shall always use this operator as \cc{x \%$>$\% f(y)}, which is shorthand for \cc{f(x,y)}. For example, the June summaries above can be found equivalently using the commands
+
+<<eval=FALSE>>=
+grps <- group_by(NOAA_precip, year, id)
+summ <- summarise(grps, days_no_precip = sum(z == 0))
+@
+
+There are other useful commands in {\bf dplyr} that we use in other Labs. First, the function \fn{arrange} sorts by a column. For example, \cc{NOAA\_df\_1990} is sorted first by station ID, and then by time (Julian date). The following code sorts the data first by time and then by station ID.
+
+<<>>=
+NOAA_df_sorted <- arrange(NOAA_df_1990, julian, id)
+@
+
+\noindent Calling \fn{head}\cc{(NOAA\_df\_sorted)} reveals that no measurements on temperature dew point are available for the first few days of the data set.
+
+Another useful function is \fn{select}, which can be used to select or discard columns. For example, in the following, \cc{df1} selects only the Julian date and the measurement while \cc{df2} contains all columns except the Julian date.
+
+<<>>=
+df1 <- select(NOAA_df_1990, julian, z)
+df2 <- select(NOAA_df_1990, -julian)
+@
+
+At present, our long data frame contains no spatial information attached to it. However, for each station ID we have an associated coordinate in the data frame \cc{locs}.  We can merge \cc{locs} to \cc{NOAA\_df\_1990} using the function \fn{left\_join}; this is considerably faster than the function \fn{merge}. With \fn{left\_join} we need to supply the column field name by which we are merging. In our case, the field common to both data sets is \strn{"id"}.
+
+<<>>=
+NOAA_df_1990 <- left_join(NOAA_df_1990, locs, by = "id")
+@
+
+Finally, it may be the case that one wishes to revert from long format to either space-wide or time-wide format. The reverse function of \fn{gather} is \fn{spread}. This also works by identifying the key--value pair in the data frame; the values are then ``widened'' into a table while the keys are used to label the columns. For example, the code below constructs a space-wide data frame of maximum temperatures, with each row denoting a different date and each column containing data \cc{z} from a specific station \cc{id}.
+
+<<>>=
+Tmax_long_sel <- select(Tmax_long, julian, id, z)
+Tmax_wide <- spread(Tmax_long_sel, id, z)
+dim(Tmax_wide)
+@
+
+\noindent The first column is the Julian date. Should one wish to construct a standard matrix containing these data, then one can simply drop this column and convert as follows.
+
+<<>>=
+M <- select(Tmax_wide, -julian) %>% as.matrix()
+@
+
+\subsection*{Working with Spatio-Temporal Data Classes}
+
+Next, we convert the data into objects of class \cc{STIDF} and \cc{STFDF}; in these class names ``DF'' is short for ``data frame,'' which indicates that in addition to the spatio-temporal locations (which only need \cc{STI} or \cc{STF} objects), the objects will also contain data. These classes are defined in the package {\bf spacetime}. Since sometimes we construct spatio-temporal objects using spatial objects we also need to load the package {\bf sp}. For details on these classes see \citet{R_spacetime}\index[aut]{Pebesma, E.}.
+
+<<warning=FALSE>>=
+library("sp")
+library("spacetime")
+@
+
+\subsubsection*{Constructing an \cc{STIDF} Object}
+
+The spatio-temporal object for irregular data, \cc{STIDF}, can be constructed using two functions: \fn{stConstruct} and \fn{STIDF}.  Let us focus on the maximum temperature in \cc{Tmax\_long}. The only thing we need to do before we call \fn{stConstruct} is to define a formal time stamp from the \cc{year,month,day} fields. First, we construct a field with the date in \cc{year}--\cc{month}--\cc{day} format using the function \fn{paste}, which concatenates strings together. Instead of typing \cc{NOAA\_df\_1990\$year, NOAA\_df\_1990\$month} and \cc{NOAA\_df\_1990\$day} we embed the \fn{paste} function within the function \fn{with} to reduce code length.
+
+<<>>=
+NOAA_df_1990$date <- with(NOAA_df_1990,
+                       paste(year, month, day, sep = "-"))
+head(NOAA_df_1990$date, 4)   # show first four elements
+@
+
+\noindent The field \cc{date} is of type \cc{character}. This field can now be converted into a \cc{Date} object using \fn{as.Date}.
+
+<<>>=
+NOAA_df_1990$date <- as.Date(NOAA_df_1990$date)
+class(NOAA_df_1990$date)
+@
+
+Now we have everything in place to construct the spatio-temporal object of class \cc{STIDF} for maximum temperature. The easiest way to do this is using \fn{stConstruct}, in which we provide the data frame in long format and indicate which are the spatial and temporal coordinates. This is the bare minimum required for constructing a spatio-temporal data set.
+
+ <<>>=
+Tmax_long2 <- filter(NOAA_df_1990, proc == "Tmax")
+STObj <- stConstruct(x = Tmax_long2,           # data set
+                     space = c("lon", "lat"),  # spatial fields
+                     time = "date")            # time field
+class(STObj)
+ @
+The function \fn{class} can be used to confirm we have successfully generated an object of class \cc{STIDF}. There are several other options that can be used with \fn{stConstruct}. For example, one can set the coordinate reference system or specify whether the time field indicates an instance or an interval. Type \fn{help}\cc{(stConstruct)} into the \cc{R} console for more details.
+
+The function \fn{STIDF} is slightly different from \fn{stConstruct} as it requires one to also specify the spatial part as an object of class \cc{Spatial} from the package {\bf sp}. In our case, the spatial component is simply an object containing irregularly spaced data, which in the package {\bf sp} is a \cc{SpatialPoints} object. A \cc{SpatialPoints} object may be constructed using the function \fn{SpatialPoints} and by supplying the coordinates as arguments. As with \fn{stConstruct}, several other arguments can also be supplied to \fn{SpatialPoints}; see the help file of \fn{SpatialPoints} for more details.
+
+<<>>=
+spat_part <- SpatialPoints(coords = Tmax_long2[, c("lon", "lat")])
+temp_part <- Tmax_long2$date
+STObj2 <- STIDF(sp = spat_part,
+                time = temp_part,
+                data = select(Tmax_long2, -date, -lon, -lat))
+class(STObj2)
+@
+
+\subsubsection*{Constructing an \cc{STFDF} Object}
+
+A similar approach can be used to construct an \cc{STFDF} object instead of an \cc{STIDF} object. When the spatial points are fixed in time, we only need to provide as many spatial co\-ord\-in\-ates as there are spatial points, in this case those of the station locations. We also need to provide the regular time stamps, that is, one for each day between 01 January 1990 and 30 December 1993. Finally, the data can be provided both in space-wide or time-wide format with \fn{stConstruct}, and in long format with \fn{STFDF}. Here we show how to use \fn{STFDF}.
+
+The spatial and temporal parts can be obtained from the original data as follows.
+<<>>=
+spat_part <- SpatialPoints(coords = locs[, c("lon", "lat")])
+temp_part <- with(Times,
+                   paste(year, month, day, sep = "-"))
+temp_part <- as.Date(temp_part)
+@
+
+\noindent The data need to be provided in long format, but now they must contain all the missing values too since a data point must be provided for every spatial and temporal combination. To get the data into long format we use \fn{gather}.
+
+<<>>=
+Tmax_long3 <- gather(Tmax, id, z, -julian, -year, -month, -day)
+@
+
+It is very important that the data frame in long format supplied to \fn{STFDF} has the spatial index moving faster than the temporal index, and that the order of the spatial index is the same as that of the spatial component supplied.
+
+<<>>=
+Tmax_long3$id <- as.integer(Tmax_long3$id)
+Tmax_long3 <- arrange(Tmax_long3,julian,id)
+@
+
+\noindent Confirming that the spatial ordering in \cc{Tmax\_long3} is the correct one can be done as follows.
+
+<<>>=
+all(unique(Tmax_long3$id) == locs$id)
+@
+
+We are now ready to construct the \cc{STFDF}.
+
+<<>>=
+STObj3 <- STFDF(sp = spat_part,
+                time = temp_part,
+                data = Tmax_long3)
+class(STObj3)
+@
+
+\noindent Since we will be using \cc{STObj3} often in the Labs we further equip it with a coordinate reference system \citep[see][for details on these reference systems]{R_sppackage}\index[aut]{Bivand, R.~S.}\index[aut]{Pebesma, E.}\index[aut]{G\'omez-Rubio, V.},
+
+<<>>=
+proj4string(STObj3) <- CRS("+proj=longlat +ellps=WGS84")
+@
+
+\noindent and replace the missing values (currently coded as $-9999$) with \num{NA}s.
+
+<<>>=
+STObj3$z[STObj3$z == -9999] <- NA
+@
+
+For ease of access, this object is saved as a data file in {\bf STRbook} and can be loaded using the command \fn{data}\cc{(}\strn{"STObj3"}\cc{,} \args{package}\cc{ = }\strn{"STRbook"}\cc{)}.
+
+
+<<echo=FALSE, purl=FALSE>>=
+save(NOAA_df_1990,file="data/NOAA_df_1990.rda")
+save(STObj3,file="data/STObj3.rda")
+@
+
+\ifstandalone
+\bibliography{LitReviewBib,LitReviewR}
+\fi
+
+
+\end{document}
