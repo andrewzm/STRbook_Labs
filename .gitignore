@@ -8,3 +8,6 @@
 !asa_edition.bst
 !img/
 !data/
+!*.rda
+!*.dat
+!*.txt
