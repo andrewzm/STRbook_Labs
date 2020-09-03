@@ -4,7 +4,7 @@
 
 **STRbook_Labs** contains the raw Sweave files (.Rnw) used to generate the Labs and all the figures in the book. We hope that updated Labs, and possibly new Labs, can be used to showcase newer packages and methods for visualizing and analyzing spatio-temporal data. 
 
-If you wish to contribute to this repository, please generate a pull request with a short summary of the proposed changes. Please also add your name and, if the contribution is substantial, also a small description of the contribution, to the acknowledgments list below.
+If you wish to contribute to this repository, please generate a pull request with a short summary of the proposed changes. If using maths, please use the macros defined in `preamble.tex` for vectors and matrices. Please also add your name and, if the contribution is substantial, also a small description of the contribution, to the acknowledgments list below.
 
 ### Acknowledgments
 
